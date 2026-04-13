@@ -21,8 +21,9 @@ const DENY_TOML: &str = include_str!("../configs/deny.toml");
 /// Embedded dprint configuration.
 const DPRINT_JSON: &str = include_str!("../configs/dprint.json");
 /// Embedded editorconfig.
-const GITIGNORE: &str = include_str!("../configs/gitignore");
 const EDITORCONFIG: &str = include_str!("../configs/editorconfig");
+/// Embedded gitignore.
+const GITIGNORE: &str = include_str!("../configs/gitignore");
 /// CLAUDE.md content for AI agents.
 const CLAUDE_MD: &str = include_str!("../configs/CLAUDE.md");
 /// Minimal main.rs that passes all lints.
@@ -418,7 +419,10 @@ fn patch_cargo_toml() {
         ("keywords", format!("keywords = [\"{name}\"]")),
         ("license", "license = \"MIT\"".into()),
         ("readme", "readme = \"README.md\"".into()),
-        ("repository", format!("repository = \"https://github.com/user/{name}\"")),
+        (
+            "repository",
+            format!("repository = \"https://github.com/user/{name}\""),
+        ),
     ];
     let mut patched = content.clone();
     for (key, line) in &fields {
@@ -435,7 +439,9 @@ fn patch_cargo_toml() {
 fn patch_main_rs() {
     let path = "src/main.rs";
     let content = fs::read_to_string(path).unwrap_or_default();
-    if content.contains("println!") || content.trim() == "fn main() {\n    println!(\"Hello, world!\");\n}" {
+    if content.contains("println!")
+        || content.trim() == "fn main() {\n    println!(\"Hello, world!\");\n}"
+    {
         discard(fs::write(path, MAIN_RS));
     }
 }

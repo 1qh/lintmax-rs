@@ -16,7 +16,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest,cargo-deny,cargo-machete,cargo-llvm-cov,dprint,typos-cli,ripgrep,cargo-lintmax
+          tool: cargo-nextest,cargo-deny,cargo-machete,cargo-llvm-cov,dprint,typos-cli,ripgrep
+      - run: cargo install --path .
       - run: cargo lintmax ci
       - run: cargo lintmax cov-ci
       - uses: actions/upload-artifact@v7
