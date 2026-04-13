@@ -2,111 +2,205 @@
 
 Run `cargo lintmax fix` after every change.
 
-## Code style rules
+## Rules — do this, NOT that
 
-### Explicit returns everywhere
-
-Every function, closure, and match arm must use explicit `return`.
+### Returns
 
 ```rust
-fn foo() -> i32 {
-    return 42;
-}
+// WRONG
+fn foo() -> i32 { 42 }
+// RIGHT
+fn foo() -> i32 { return 42; }
+
+// WRONG
+.map(|val| val + 1)
+// RIGHT
 .map(|val| return val + 1)
-.filter(|val| return !val.is_empty())
 ```
 
-### Doc comments on everything, no regular comments
-
-- Every `fn`, `const`, `struct`, `enum`, variant, and field needs `///`
-- Crate root needs `//!`
-- No `//` comments allowed anywhere
-- `# Panics` section required on any fn that can panic
-
-### Discarding results: the `discard()` pattern
-
-Multiple lints conflict on how to ignore return values. Define this helper and use it everywhere:
+### Doc comments
 
 ```rust
+// WRONG — regular comment
+// this adds two numbers
+fn add(left: i32, right: i32) -> i32 { return left + right; }
+
+// WRONG — missing doc
+fn add(left: i32, right: i32) -> i32 { return left + right; }
+
+// RIGHT
+/// Adds two numbers.
+fn add(left: i32, right: i32) -> i32 { return left + right; }
+
+// WRONG — missing crate doc
+use std::fs;
+
+// RIGHT
+//! My crate description.
+use std::fs;
+```
+
+### Discarding results
+
+```rust
+// WRONG
+fs::write("f.txt", "x").ok();
+// WRONG
+let _ = fs::write("f.txt", "x");
+// WRONG
+drop(fs::write("f.txt", "x"));
+
+// RIGHT — define once, use everywhere
 fn discard<T>(_value: T) {}
-
-discard(fs::write("file.txt", "content"));
-discard(cmd("cargo", &["fmt"]));
+discard(fs::write("f.txt", "x"));
 ```
 
-### Alphabetical ordering
-
-All items in a module must be alphabetically ordered: consts, then enums/structs, then fns. Enum variants must also be alphabetical.
-
-### No absolute paths
-
-Import with `use` first, never `std::io::stderr()` inline.
+### Ordering
 
 ```rust
+// WRONG
+fn zebra() {}
+fn alpha() {}
+const Z: i32 = 1;
+const A: i32 = 0;
+
+// RIGHT — consts first (alphabetical), then fns (alphabetical)
+const A: i32 = 0;
+const Z: i32 = 1;
+fn alpha() {}
+fn zebra() {}
+```
+
+### Paths
+
+```rust
+// WRONG
+std::io::stderr()
+
+// RIGHT
 use std::io;
 io::stderr()
 ```
 
-### No raw string literals unless needed
-
-Use regular string literals. `r#"..."#` only when the string contains `"` or `\`.
-
-### Imports: one per line, grouped
+### Imports
 
 ```rust
+// WRONG
+use std::{fs, io};
+use clap::{Parser, Subcommand};
+
+// RIGHT
 use std::fs;
 use std::io;
-use std::path::Path;
 
 use clap::Parser;
+use clap::Subcommand;
 ```
 
-Standard library first, then external crates. One `use` per import.
-
-### `#[cfg]` blocks and semicolons
-
-Omit semicolon inside cfg block, put it outside:
+### Casts
 
 ```rust
+// WRONG
+let byte = code as u8;
+
+// RIGHT
+let byte = u8::try_from(code).unwrap_or(1);
+```
+
+### Error handling
+
+```rust
+// WRONG
+let val = something()?;
+// WRONG
+let val = something().unwrap();
+// WRONG
+let val = something().expect("msg");
+
+// RIGHT
+let val = something().unwrap_or_default();
+// RIGHT
+let val = match something() {
+    Ok(inner) => inner,
+    Err(_) => return ExitCode::FAILURE,
+};
+```
+
+### Printing
+
+```rust
+// WRONG
+println!("hello");
+// WRONG
+eprintln!("error");
+
+// RIGHT
+use std::io;
+use std::io::Write as _;
+discard(writeln!(io::stderr(), "error"));
+```
+
+### Suppressing lints
+
+```rust
+// WRONG
+#[allow(clippy::some_lint)]
+
+// RIGHT
+#[expect(clippy::some_lint, reason = "explanation why this is needed")]
+```
+
+### Literal suffixes
+
+```rust
+// WRONG
+let x = 1_i32;
+// RIGHT
+let x = 1i32;
+```
+
+### `#[cfg]` blocks
+
+```rust
+// WRONG
+#[cfg(unix)]
+{
+    discard(some_call());
+}
+
+// RIGHT
 #[cfg(unix)]
 {
     discard(some_call())
 };
 ```
 
-### Single-character identifiers
-
-Single-char names like `f`, `i`, `x` are allowed. But max 1 single-char binding in scope at a time. Use descriptive names: `status` not `s`, `command` not `c`.
-
-### `as` casts forbidden
-
-Use `From`, `Into`, `TryFrom`, `TryInto`:
+### Raw strings
 
 ```rust
-ExitCode::from(u8::try_from(code).unwrap_or(1))
+// WRONG
+let s = r#"hello world"#;
+// RIGHT
+let s = "hello world";
+
+// OK — needs raw string because of quotes
+let s = r#"say "hello""#;
 ```
 
-### `?` operator forbidden
+### Variable names
 
-Use explicit `match`, `if let`, `map`/`and_then`, or `discard()`.
+```rust
+// WRONG — 2+ single-char names in scope
+let s = get_status();
+let c = get_command();
 
-### `unwrap()` and `expect()` forbidden
+// RIGHT
+let status = get_status();
+let command = get_command();
 
-Use `unwrap_or`, `unwrap_or_default`, `unwrap_or_else`, or explicit matching.
-
-### Print forbidden
-
-No `println!`/`eprintln!`. Use `writeln!(io::stderr(), ...)` wrapped in `discard()`.
-
-### `#[allow]` forbidden
-
-Use `#[expect(lint, reason = "...")]` for documented exceptions. Never `#[allow]`.
-
-## Lint severity
-
-- `forbid`: all rustc allow-by-default lints. Cannot override.
-- `deny`: clippy groups (pedantic, nursery, cargo, restriction). Can override with `#[expect]`.
-- Three rustc lints use `deny` not `forbid`: `warnings`, `unused_extern_crates`, `unused_qualifications` (serde derive compatibility).
+// OK — single single-char name
+let f: &mut fmt::Formatter<'_>
+```
 
 ## Contradicting lint pairs (allowed)
 
