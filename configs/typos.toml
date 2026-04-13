@@ -1,0 +1,6 @@
+[default]
+check-filename = true
+check-file = true
+
+[files]
+extend-exclude = ["target/", "Cargo.lock"]

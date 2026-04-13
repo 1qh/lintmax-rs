@@ -1,0 +1,45 @@
+cognitive-complexity-threshold = 5
+too-many-arguments-threshold = 4
+too-many-lines-threshold = 40
+type-complexity-threshold = 150
+excessive-nesting-threshold = 3
+max-fn-params-bools = 0
+max-struct-bools = 1
+enum-variant-size-threshold = 64
+large-error-threshold = 32
+future-size-threshold = 2048
+stack-size-threshold = 262144
+single-char-binding-names-threshold = 1
+trivial-copy-size-limit = 8
+
+allow-unwrap-in-tests = false
+allow-expect-in-tests = false
+allow-dbg-in-tests = false
+allow-print-in-tests = false
+
+min-ident-chars-threshold = 1
+allowed-idents-below-min-chars = ["f", "i", "j", "n", "x", "y", "_"]
+disallowed-names = ["foo", "bar", "baz", "quux", "tmp", "temp"]
+
+warn-on-all-wildcard-imports = true
+check-private-items = true
+accept-comment-above-attributes = true
+accept-comment-above-statement = true
+missing-docs-in-crate-items = true
+
+doc-valid-idents = [
+  "GraphQL",
+  "GitHub",
+  "JavaScript",
+  "TypeScript",
+  "WebSocket",
+  "MongoDB",
+  "PostgreSQL",
+  "MySQL",
+  "SQLite",
+  "Redis",
+  "OAuth",
+  "OpenAPI",
+  "gRPC",
+  "WebAssembly",
+]
