@@ -295,19 +295,42 @@ fn run_clean() -> ExitCode {
     return cmd("cargo", &["clean"]);
 }
 
-/// Runs clippy auto-fix.
+/// Builds clippy lint flags.
+fn build_lint_args() -> Vec<String> {
+    let mut args = Vec::new();
+    for lint in RUSTC_FORBID {
+        args.push("-F".into());
+        args.push((*lint).into());
+    }
+    for lint in RUSTC_DENY {
+        args.push("-D".into());
+        args.push((*lint).into());
+    }
+    for lint in CLIPPY_DENY {
+        args.push("-D".into());
+        args.push((*lint).into());
+    }
+    for lint in CLIPPY_ALLOW {
+        args.push("-A".into());
+        args.push((*lint).into());
+    }
+    return args;
+}
+
+/// Runs clippy auto-fix with all lint flags.
 fn run_clippy_fix() -> ExitCode {
-    return cmd(
-        "cargo",
-        &[
-            "clippy",
-            "--all-targets",
-            "--all-features",
-            "--fix",
-            "--allow-dirty",
-            "--quiet",
-        ],
-    );
+    let mut args: Vec<String> = vec![
+        "clippy".into(),
+        "--all-targets".into(),
+        "--all-features".into(),
+        "--fix".into(),
+        "--allow-dirty".into(),
+        "--quiet".into(),
+        "--".into(),
+    ];
+    args.extend(build_lint_args());
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    return cmd("cargo", &refs);
 }
 
 /// Opens coverage report in browser.
@@ -455,23 +478,7 @@ fn run_lint() -> ExitCode {
         "--quiet".into(),
         "--".into(),
     ];
-
-    for lint in RUSTC_FORBID {
-        args.push("-F".into());
-        args.push((*lint).into());
-    }
-    for lint in RUSTC_DENY {
-        args.push("-D".into());
-        args.push((*lint).into());
-    }
-    for lint in CLIPPY_DENY {
-        args.push("-D".into());
-        args.push((*lint).into());
-    }
-    for lint in CLIPPY_ALLOW {
-        args.push("-A".into());
-        args.push((*lint).into());
-    }
+    args.extend(build_lint_args());
 
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     return cmd("cargo", &refs);

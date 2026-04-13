@@ -2,10 +2,6 @@
 
 Run `cargo lintmax fix` after every change.
 
-## CRITICAL: `cargo lintmax fix` strips explicit returns
-
-`cargo lintmax fix` runs `cargo clippy --fix` which removes `return` statements. But our rules REQUIRE explicit `return` everywhere. After running `cargo lintmax fix`, you MUST re-add all explicit `return` statements it removed. Always write explicit `return` in your code — never rely on `fix` to add them.
-
 ## Rules — do this, NOT that
 
 ### Returns
