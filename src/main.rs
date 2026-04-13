@@ -21,6 +21,7 @@ const DENY_TOML: &str = include_str!("../configs/deny.toml");
 /// Embedded dprint configuration.
 const DPRINT_JSON: &str = include_str!("../configs/dprint.json");
 /// Embedded editorconfig.
+const GITIGNORE: &str = include_str!("../configs/gitignore");
 const EDITORCONFIG: &str = include_str!("../configs/editorconfig");
 /// CLAUDE.md content for AI agents.
 const CLAUDE_MD: &str = include_str!("../configs/CLAUDE.md");
@@ -194,8 +195,8 @@ enum Sub {
     Fix,
     /// Format all files.
     Fmt,
-    /// Setup git hooks and CI workflow.
-    Init,
+    /// Sync project files (hooks, CI, gitignore, CLAUDE.md).
+    Sync,
     /// Dev loop with bacon.
     Watch,
 }
@@ -256,7 +257,7 @@ fn main() -> ExitCode {
         Some(Sub::CovCi) => run_cov_ci(),
         Some(Sub::Fix) => run_fix(),
         Some(Sub::Fmt) => run_fmt(),
-        Some(Sub::Init) => run_init(),
+        Some(Sub::Sync) => run_sync(),
         Some(Sub::Watch) => run_watch(),
     };
 }
@@ -376,8 +377,8 @@ fn run_fmt_check() -> ExitCode {
     return worst(result_rust, result_dprint);
 }
 
-/// Sets up git hooks, CI workflow, editor configs, and patches source.
-fn run_init() -> ExitCode {
+/// Syncs all managed files: hooks, CI, gitignore, CLAUDE.md, editor configs, patches source.
+fn run_sync() -> ExitCode {
     discard(fs::create_dir_all(".githooks"));
     discard(fs::write(".githooks/pre-commit", PRE_COMMIT));
     #[cfg(unix)]
@@ -391,16 +392,14 @@ fn run_init() -> ExitCode {
     discard(cmd("git", &["config", "core.hooksPath", ".githooks"]));
     discard(fs::create_dir_all(".github/workflows"));
     discard(fs::write(".github/workflows/ci.yml", CI_YML));
+    discard(fs::write(".gitignore", GITIGNORE));
     discard(fs::write(".editorconfig", EDITORCONFIG));
     discard(fs::write("rust-analyzer.toml", RUST_ANALYZER_TOML));
     discard(fs::write("CLAUDE.md", CLAUDE_MD));
     patch_cargo_toml();
     patch_main_rs();
     discard(run_fix());
-    discard(writeln!(
-        io::stderr(),
-        "initialized: hooks, ci, editorconfig, rust-analyzer, cargo.toml, main.rs"
-    ));
+    discard(writeln!(io::stderr(), "synced"));
     return ExitCode::SUCCESS;
 }
 

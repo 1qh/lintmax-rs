@@ -1,0 +1,6 @@
+/target
+Cargo.lock
+lcov.info
+.editorconfig
+rust-analyzer.toml
+.githooks

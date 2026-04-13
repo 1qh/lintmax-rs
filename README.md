@@ -18,7 +18,7 @@ cargo lintmax fix      # auto-fix everything
 cargo lintmax fmt      # format all files
 cargo lintmax watch    # dev loop with bacon
 cargo lintmax cov      # coverage report
-cargo lintmax init     # setup git hooks + CI workflow
+cargo lintmax sync     # sync hooks, CI, gitignore, CLAUDE.md
 ```
 
 ## What it does
