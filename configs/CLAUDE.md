@@ -1,6 +1,6 @@
 # Project
 
-Run `cargo lintmax` to check. Run `cargo lintmax fix` to auto-fix.
+Run `cargo lintmax fix` after every change.
 
 ## Code style rules
 
