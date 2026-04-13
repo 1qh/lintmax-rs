@@ -22,6 +22,8 @@ const DENY_TOML: &str = include_str!("../configs/deny.toml");
 const DPRINT_JSON: &str = include_str!("../configs/dprint.json");
 /// Embedded editorconfig.
 const EDITORCONFIG: &str = include_str!("../configs/editorconfig");
+/// Minimal main.rs that passes all lints.
+const MAIN_RS: &str = "//! Main entry point.\n\n/// Entry point.\nconst fn main() {}\n";
 /// Git pre-commit hook content.
 const PRE_COMMIT: &str = "#!/bin/sh\ncargo lintmax\n";
 /// Embedded rust-analyzer configuration.
@@ -372,7 +374,7 @@ fn run_fmt_check() -> ExitCode {
     return worst(result_rust, result_dprint);
 }
 
-/// Sets up git hooks, CI workflow, and editor configs.
+/// Sets up git hooks, CI workflow, editor configs, and patches source.
 fn run_init() -> ExitCode {
     discard(fs::create_dir_all(".githooks"));
     discard(fs::write(".githooks/pre-commit", PRE_COMMIT));
@@ -389,11 +391,51 @@ fn run_init() -> ExitCode {
     discard(fs::write(".github/workflows/ci.yml", CI_YML));
     discard(fs::write(".editorconfig", EDITORCONFIG));
     discard(fs::write("rust-analyzer.toml", RUST_ANALYZER_TOML));
+    patch_cargo_toml();
+    patch_main_rs();
+    discard(run_fix());
     discard(writeln!(
         io::stderr(),
-        "initialized: .githooks, .github/workflows/ci.yml, .editorconfig, rust-analyzer.toml"
+        "initialized: hooks, ci, editorconfig, rust-analyzer, cargo.toml, main.rs"
     ));
     return ExitCode::SUCCESS;
+}
+
+/// Adds missing metadata fields to Cargo.toml if absent.
+fn patch_cargo_toml() {
+    let path = "Cargo.toml";
+    let content = fs::read_to_string(path).unwrap_or_default();
+    let name = content
+        .lines()
+        .find(|line| return line.starts_with("name"))
+        .and_then(|line| return line.split('"').nth(1))
+        .unwrap_or("project");
+    let fields: Vec<(&str, String)> = vec![
+        ("categories", "categories = [\"development-tools\"]".into()),
+        ("description", format!("description = \"{name}\"")),
+        ("keywords", format!("keywords = [\"{name}\"]")),
+        ("license", "license = \"MIT\"".into()),
+        ("readme", "readme = \"README.md\"".into()),
+        ("repository", format!("repository = \"https://github.com/user/{name}\"")),
+    ];
+    let mut patched = content.clone();
+    for (key, line) in &fields {
+        if !patched.contains(key) {
+            patched = patched.replace("[dependencies]", &format!("{line}\n[dependencies]"));
+        }
+    }
+    if patched != content {
+        discard(fs::write(path, patched));
+    }
+}
+
+/// Replaces default main.rs with one that passes all lints.
+fn patch_main_rs() {
+    let path = "src/main.rs";
+    let content = fs::read_to_string(path).unwrap_or_default();
+    if content.contains("println!") || content.trim() == "fn main() {\n    println!(\"Hello, world!\");\n}" {
+        discard(fs::write(path, MAIN_RS));
+    }
 }
 
 /// Runs clippy with all lint flags.
