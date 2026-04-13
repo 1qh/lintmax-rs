@@ -23,22 +23,7 @@ const DPRINT_JSON: &str = include_str!("../configs/dprint.json");
 /// Embedded editorconfig.
 const EDITORCONFIG: &str = include_str!("../configs/editorconfig");
 /// CLAUDE.md content for AI agents.
-const CLAUDE_MD: &str = "# Project\n\
-    \n\
-    Run `cargo lintmax` to check. Run `cargo lintmax fix` to auto-fix.\n\
-    \n\
-    ## Rules\n\
-    \n\
-    - Use `#[expect(lint, reason = \"...\")]` for exceptions, never `#[allow]`\n\
-    - No `//` comments, only `///` doc comments\n\
-    - Explicit `return` in every function and closure\n\
-    - No `?` operator, no `unwrap()`, no `expect()`\n\
-    - No `println!`/`eprintln!` — use `writeln!(io::stderr(), ...)`\n\
-    - No `as` casts — use `From`/`TryFrom`\n\
-    - No absolute paths — import with `use` first\n\
-    - All items alphabetically ordered\n\
-    - Doc comment on every item including private\n\
-    - Use `discard(expr)` to ignore Results (define `fn discard<T>(_: T) {}`)\n";
+const CLAUDE_MD: &str = include_str!("../configs/CLAUDE.md");
 /// Minimal main.rs that passes all lints.
 const MAIN_RS: &str = "//! Main entry point.\n\n/// Entry point.\nconst fn main() {}\n";
 /// Git pre-commit hook content.
