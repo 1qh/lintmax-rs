@@ -21,8 +21,6 @@ use std::process::Stdio;
 use clap::Parser;
 use clap::Subcommand;
 
-/// Embedded bacon configuration.
-const BACON_TOML: &str = include_str!("../configs/bacon.toml");
 /// Embedded clippy configuration.
 const CLIPPY_TOML: &str = include_str!("../configs/clippy.toml");
 /// Embedded cargo-deny configuration.
@@ -35,10 +33,12 @@ const EDITORCONFIG: &str = include_str!("../configs/editorconfig");
 const GITIGNORE: &str = include_str!("../configs/gitignore");
 /// CLAUDE.md content for AI agents.
 const CLAUDE_MD: &str = include_str!("../configs/CLAUDE.md");
-/// Minimal main.rs that passes all lints.
-const MAIN_RS: &str = "//! Main entry point.\n\n/// Entry point.\nconst fn main() {}\n";
 /// Git pre-commit hook content.
 const PRE_COMMIT: &str = "#!/bin/sh\ncargo lintmax\n";
+/// Embedded CI-run prune script synced into consumer repos.
+const PRUNE_CI_RUNS: &str = include_str!("../.github/scripts/prune-ci-runs.sh");
+/// Embedded release prune script synced into consumer repos.
+const PRUNE_OLD_RELEASES: &str = include_str!("../.github/scripts/prune-old-releases.sh");
 /// Embedded rust-analyzer configuration.
 const RUST_ANALYZER_TOML: &str = include_str!("../configs/rust-analyzer.toml");
 /// Embedded rustfmt configuration.
@@ -46,32 +46,10 @@ const RUSTFMT_TOML: &str = include_str!("../configs/rustfmt.toml");
 /// Embedded typos configuration.
 const TYPOS_TOML: &str = include_str!("../configs/typos.toml");
 
-/// GitHub Actions CI workflow.
-const CI_YML: &str = "name: CI\n\
-    on: [push, pull_request]\n\
-    \n\
-    env:\n\
-    \x20 CARGO_TERM_COLOR: always\n\
-    \x20 CARGO_INCREMENTAL: 0\n\
-    \n\
-    jobs:\n\
-    \x20 ci:\n\
-    \x20\x20\x20 runs-on: ubuntu-latest\n\
-    \x20\x20\x20 steps:\n\
-    \x20\x20\x20\x20\x20 - uses: actions/checkout@v6\n\
-    \x20\x20\x20\x20\x20 - uses: dtolnay/rust-toolchain@stable\n\
-    \x20\x20\x20\x20\x20\x20\x20 with:\n\
-    \x20\x20\x20\x20\x20\x20\x20\x20\x20 components: clippy, rustfmt, llvm-tools-preview\n\
-    \x20\x20\x20\x20\x20 - uses: Swatinem/rust-cache@v2\n\
-    \x20\x20\x20\x20\x20 - uses: taiki-e/install-action@v2\n\
-    \x20\x20\x20\x20\x20\x20\x20 with:\n\
-    \x20\x20\x20\x20\x20\x20\x20\x20\x20 tool: cargo-nextest,cargo-deny,cargo-machete,cargo-llvm-cov,dprint,typos-cli,ripgrep,cargo-lintmax\n\
-    \x20\x20\x20\x20\x20 - run: cargo lintmax ci\n\
-    \x20\x20\x20\x20\x20 - run: cargo lintmax cov-ci\n\
-    \x20\x20\x20\x20\x20 - uses: actions/upload-artifact@v7\n\
-    \x20\x20\x20\x20\x20\x20\x20 with:\n\
-    \x20\x20\x20\x20\x20\x20\x20\x20\x20 name: coverage\n\
-    \x20\x20\x20\x20\x20\x20\x20\x20\x20 path: lcov.info\n";
+/// GitHub Actions CI workflow synced into consumer repos.
+const CI_YML: &str = include_str!("../configs/ci.yml");
+/// GitHub Actions release workflow synced into consumer repos.
+const RELEASE_YML: &str = include_str!("../configs/release.yml");
 
 /// Clippy lints to allow (contradicting pairs and impractical restrictions).
 #[rustfmt::skip]
@@ -193,26 +171,14 @@ struct Cli {
 /// Available subcommands.
 #[derive(Subcommand)]
 enum Sub {
-    /// Full pipeline (clean, update, check all).
-    Ci,
-    /// CI pipeline (no clean).
-    CiRemote,
-    /// Coverage report (opens browser).
-    Cov,
-    /// Coverage for CI (lcov output).
-    CovCi,
-    /// Auto-fix everything.
+    /// CI verify: read-only full gate, no writes.
+    Check,
+    /// Auto-fix everything then verify (the default action).
     Fix,
-    /// Format all files.
-    Fmt,
-    /// Sync project files (hooks, CI, gitignore, CLAUDE.md).
-    Sync,
-    /// Update cargo deps and dprint plugins to latest.
-    Update,
-    /// Self-update cargo-lintmax to the latest release.
-    Upgrade,
-    /// Dev loop with bacon.
-    Watch,
+    /// List the active rule set.
+    Rules,
+    /// Print the version.
+    Version,
 }
 
 /// Discards a result, satisfying must-use and drop lints.
@@ -306,26 +272,22 @@ fn is_lintmax_content(path: &Path, expected: &str) -> bool {
 fn main() -> ExitCode {
     let Cargo::Lintmax(cli) = Cargo::parse();
 
-    if cli.command.is_none() {
-        return run_default();
+    evolve();
+    match cli.command {
+        None | Some(Sub::Check) => return run_default(),
+        Some(Sub::Version) => {
+            emit(pkg_version());
+            return ExitCode::SUCCESS;
+        }
+        Some(Sub::Rules) => {
+            print_rules();
+            return ExitCode::SUCCESS;
+        }
+        Some(Sub::Fix) => {}
     }
-    let result = match cli.command {
-        None => run_check_all(),
-        Some(Sub::Ci) => run_ci(),
-        Some(Sub::CiRemote) => run_ci_remote(),
-        Some(Sub::Cov) => run_cov(),
-        Some(Sub::CovCi) => run_cov_ci(),
-        Some(Sub::Fix) => run_fix(),
-        Some(Sub::Fmt) => run_fmt(),
-        Some(Sub::Sync) => run_sync(),
-        Some(Sub::Update) => run_update(),
-        Some(Sub::Upgrade) => run_upgrade(),
-        Some(Sub::Watch) => return run_watch(),
-    };
+    let result = run_fix();
     if result == ExitCode::SUCCESS {
-        let mut stdout = io::stdout();
-        discard(writeln!(stdout, "ok"));
-        discard(stdout.flush());
+        emit("ok");
     }
     return result;
 }
@@ -340,6 +302,8 @@ fn run_check_all() -> ExitCode {
         run_lint,
         run_machete,
         run_no_comments,
+        run_shellcheck,
+        run_shfmt_check,
         run_test,
         run_typos,
     ]);
@@ -436,21 +400,6 @@ fn run_advisories() {
     );
 }
 
-/// Runs clean, update, then all checks.
-fn run_ci() -> ExitCode {
-    return run_seq(&[run_clean, run_update, run_check_all]);
-}
-
-/// Runs update then all checks (no clean).
-fn run_ci_remote() -> ExitCode {
-    return run_seq(&[run_update, run_check_all]);
-}
-
-/// Cleans build artifacts.
-fn run_clean() -> ExitCode {
-    return cmd("cargo", &["clean"]);
-}
-
 /// Builds clippy lint flags.
 fn build_lint_args() -> Vec<String> {
     let mut args = Vec::new();
@@ -489,25 +438,6 @@ fn run_clippy_fix() -> ExitCode {
     return cmd("cargo", &refs);
 }
 
-/// Opens coverage report in browser.
-fn run_cov() -> ExitCode {
-    return cmd("cargo", &["llvm-cov", "--all-features", "--open"]);
-}
-
-/// Generates lcov coverage for CI.
-fn run_cov_ci() -> ExitCode {
-    return cmd(
-        "cargo",
-        &[
-            "llvm-cov",
-            "--all-features",
-            "--lcov",
-            "--output-path",
-            "lcov.info",
-        ],
-    );
-}
-
 /// Runs cargo-deny dependency audit.
 fn run_deny() -> ExitCode {
     return cmd_quiet("cargo", &["deny", "-L", "error", "check"]);
@@ -529,16 +459,9 @@ fn run_fix() -> ExitCode {
         run_clippy_fix,
         run_remove_comments,
         run_typos_fix,
+        run_shfmt_fix,
         run_fmt_all,
     ]);
-    clean_configs();
-    return result;
-}
-
-/// Formats all files with temporary configs.
-fn run_fmt() -> ExitCode {
-    write_configs();
-    let result = run_fmt_all();
     clean_configs();
     return result;
 }
@@ -557,10 +480,63 @@ fn run_fmt_check() -> ExitCode {
     return worst(result_rust, result_dprint);
 }
 
-/// Syncs all managed files: hooks, CI, gitignore, CLAUDE.md, editor configs, patches source.
-fn run_sync() -> ExitCode {
+/// Self-evolving maintenance run on every invocation.
+///
+/// Refreshes the toolchain on cadence (force-latest under CI) and keeps the
+/// consumer's managed project files current (write-if-stale, idempotent). Skips
+/// lintmax-rs's own repo.
+fn evolve() {
+    refresh_toolchain();
+    if is_own_repo() {
+        return;
+    }
+    write_if_stale(".gitignore", GITIGNORE);
+    write_if_stale(".editorconfig", EDITORCONFIG);
+    write_if_stale("rust-analyzer.toml", RUST_ANALYZER_TOML);
+    write_if_stale("CLAUDE.md", CLAUDE_MD);
+    sync_managed_dir(
+        ".github/workflows",
+        &[("ci.yml", CI_YML), ("release.yml", RELEASE_YML)],
+    );
+    sync_managed_dir(
+        ".github/scripts",
+        &[
+            ("prune-ci-runs.sh", PRUNE_CI_RUNS),
+            ("prune-old-releases.sh", PRUNE_OLD_RELEASES),
+        ],
+    );
+    sync_pre_commit_hook();
+}
+
+/// Whether the current working tree is lintmax-rs's own repo (where the managed
+/// files are hand-maintained, not synced).
+fn is_own_repo() -> bool {
+    return fs::read_to_string("Cargo.toml")
+        .is_ok_and(|content| return content.contains("name = \"cargo-lintmax\""));
+}
+
+/// Writes the file only when missing or stale, never clobbering a consumer edit
+/// that diverged intentionally — staleness is exact-content mismatch against a
+/// previously lintmax-written file.
+fn write_if_stale(path: &str, content: &str) {
+    let current = fs::read_to_string(path).unwrap_or_default();
+    if current != content {
+        discard(fs::write(path, content));
+    }
+}
+
+/// Ensures a managed directory holds the current copy of each named file.
+fn sync_managed_dir(dir: &str, files: &[(&str, &str)]) {
+    discard(fs::create_dir_all(dir));
+    for &(name, content) in files {
+        write_if_stale(&format!("{dir}/{name}"), content);
+    }
+}
+
+/// Writes the pre-commit hook and points git at it (idempotent).
+fn sync_pre_commit_hook() {
     discard(fs::create_dir_all(".githooks"));
-    discard(fs::write(".githooks/pre-commit", PRE_COMMIT));
+    write_if_stale(".githooks/pre-commit", PRE_COMMIT);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -569,59 +545,26 @@ fn run_sync() -> ExitCode {
             fs::Permissions::from_mode(0o755),
         ))
     };
-    discard(cmd("git", &["config", "core.hooksPath", ".githooks"]));
-    discard(fs::create_dir_all(".github/workflows"));
-    discard(fs::write(".github/workflows/ci.yml", CI_YML));
-    discard(fs::write(".gitignore", GITIGNORE));
-    discard(fs::write(".editorconfig", EDITORCONFIG));
-    discard(fs::write("rust-analyzer.toml", RUST_ANALYZER_TOML));
-    discard(fs::write("CLAUDE.md", CLAUDE_MD));
-    patch_cargo_toml();
-    patch_main_rs();
-    discard(run_fix());
-    return ExitCode::SUCCESS;
+    discard(cmd_quiet("git", &["config", "core.hooksPath", ".githooks"]));
 }
 
-/// Adds missing metadata fields to Cargo.toml if absent.
-fn patch_cargo_toml() {
-    let path = "Cargo.toml";
-    let content = fs::read_to_string(path).unwrap_or_default();
-    let name = content
-        .lines()
-        .find(|line| return line.starts_with("name"))
-        .and_then(|line| return line.split('"').nth(1))
-        .unwrap_or("project");
-    let fields: Vec<(&str, String)> = vec![
-        ("categories", "categories = [\"development-tools\"]".into()),
-        ("description", format!("description = \"{name}\"")),
-        ("keywords", format!("keywords = [\"{name}\"]")),
-        ("license", "license = \"MIT\"".into()),
-        ("readme", "readme = \"README.md\"".into()),
-        (
-            "repository",
-            format!("repository = \"https://github.com/user/{name}\""),
-        ),
-    ];
-    let mut patched = content.clone();
-    for (key, line) in &fields {
-        if !patched.contains(key) {
-            patched = patched.replace("[dependencies]", &format!("{line}\n[dependencies]"));
-        }
+/// Refreshes the toolchain to latest on a cadence: every run under CI, otherwise
+/// at most once per refresh window so the fast local loop stays cheap.
+fn refresh_toolchain() {
+    if in_ci() {
+        do_refresh();
+        return;
     }
-    if patched != content {
-        discard(fs::write(path, patched));
+    if state::refresh_due() {
+        do_refresh();
+        state::mark_refreshed();
     }
 }
 
-/// Replaces default main.rs with one that passes all lints.
-fn patch_main_rs() {
-    let path = "src/main.rs";
-    let content = fs::read_to_string(path).unwrap_or_default();
-    if content.contains("println!")
-        || content.trim() == "fn main() {\n    println!(\"Hello, world!\");\n}"
-    {
-        discard(fs::write(path, MAIN_RS));
-    }
+/// Bumps cargo deps and dprint plugins to latest.
+fn do_refresh() {
+    discard(cmd_quiet("cargo", &["update"]));
+    discard(cmd_quiet("dprint", &["config", "update"]));
 }
 
 /// Runs clippy with all lint flags.
@@ -642,6 +585,93 @@ fn run_lint() -> ExitCode {
 /// Runs cargo-machete unused dependency check.
 fn run_machete() -> ExitCode {
     return cmd_quiet("cargo", &["machete"]);
+}
+
+/// Collects the stdout lines of an rg invocation as deduplicated paths,
+/// appending any not already present.
+fn collect_rg(args: &[&str], paths: &mut Vec<PathBuf>) {
+    let Ok(out) = Command::new("rg").args(args).output() else {
+        return;
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let path = PathBuf::from(line);
+        if !line.is_empty() && !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+}
+
+/// Hand-written shell scripts in the tree (by `.sh` extension or a `#!...sh`
+/// shebang), excluding generated output — the shell gate's scan scope.
+fn shell_files() -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    collect_rg(
+        &[
+            "--hidden",
+            "--glob",
+            "!.git/**",
+            "--glob",
+            "!target/**",
+            "--files-with-matches",
+            "-U",
+            r"\A#!.*\bsh\b",
+        ],
+        &mut paths,
+    );
+    collect_rg(
+        &[
+            "--hidden",
+            "--glob",
+            "!.git/**",
+            "--glob",
+            "!target/**",
+            "--files",
+            "--glob",
+            "*.sh",
+        ],
+        &mut paths,
+    );
+    return paths;
+}
+
+/// Lints every shell script with shellcheck at max severity (all optional
+/// checks on). A clean run is silent; findings surface on failure.
+fn run_shellcheck() -> ExitCode {
+    let files = shell_files();
+    if files.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let mut args: Vec<String> = vec!["--severity=style".into(), "--enable=all".into()];
+    for path in &files {
+        args.push(path.display().to_string());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    return cmd("shellcheck", &refs);
+}
+
+/// Verifies every shell script is shfmt-formatted (shell auto-detected from the
+/// shebang, 2-space indent).
+fn run_shfmt_check() -> ExitCode {
+    return run_shfmt("-d");
+}
+
+/// Formats every shell script in place with shfmt.
+fn run_shfmt_fix() -> ExitCode {
+    return run_shfmt("-w");
+}
+
+/// Runs shfmt over every shell script with the given mode flag.
+fn run_shfmt(mode: &str) -> ExitCode {
+    let files = shell_files();
+    if files.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let mut args: Vec<String> = vec!["-i=2".into(), mode.into()];
+    for path in &files {
+        args.push(path.display().to_string());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    return cmd("shfmt", &refs);
 }
 
 /// Source files scanned for comments (any hand-written `.rs` under `src/`).
@@ -767,32 +797,31 @@ fn run_typos_fix() -> ExitCode {
     return cmd("typos", &["-w"]);
 }
 
-/// Updates cargo deps and dprint plugins.
-fn run_update() -> ExitCode {
-    discard(cmd("cargo", &["update"]));
-    discard(cmd("dprint", &["config", "update"]));
-    return ExitCode::SUCCESS;
-}
-
-/// Self-updates cargo-lintmax to the latest published release.
-fn run_upgrade() -> ExitCode {
-    return cmd(
-        "cargo",
-        &[
-            "install",
-            "--force",
-            "--git",
-            "https://github.com/1qh/lintmax-rs",
-            "cargo-lintmax",
-        ],
-    );
-}
-
-/// Starts bacon dev loop.
-fn run_watch() -> ExitCode {
-    write_config("bacon.toml", BACON_TOML);
-    write_config("clippy.toml", CLIPPY_TOML);
-    return cmd("bacon", &["clippy"]);
+/// Prints the active rule set: every clippy group denied, the rustc forbid/deny
+/// sets, and the in-house advisory analyzers.
+fn print_rules() {
+    let mut out = io::stdout();
+    discard(writeln!(
+        out,
+        "clippy groups (deny): {}",
+        CLIPPY_DENY.join(", ")
+    ));
+    discard(writeln!(
+        out,
+        "clippy allow (contradicting pairs / impractical): {}",
+        CLIPPY_ALLOW.join(", ")
+    ));
+    discard(writeln!(out, "rustc forbid: {}", RUSTC_FORBID.join(", ")));
+    discard(writeln!(out, "rustc deny: {}", RUSTC_DENY.join(", ")));
+    discard(writeln!(
+        out,
+        "in-house analyzers: dupconst, gibberish, floatdiv"
+    ));
+    discard(writeln!(
+        out,
+        "gates: fmt(rustfmt+dprint), shell(shellcheck+shfmt), typos, no-comments, clippy, doc, test, cargo-deny, cargo-machete"
+    ));
+    discard(out.flush());
 }
 
 /// Returns the worse of two exit codes.

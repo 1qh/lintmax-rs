@@ -4,9 +4,6 @@ on:
     tags: ["v*"]
 permissions:
   contents: write
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -24,18 +21,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest,cargo-deny,cargo-machete,dprint,typos-cli,ripgrep,shellcheck,shfmt
-      - run: cargo install --path .
-      - name: dogfood (lintmax check on itself)
-        run: cargo lintmax check
-      - name: publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
-      - name: create github release
-        env:
+      - run: cargo install cargo-lintmax
+      - run: cargo lintmax check
+      - env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --generate-notes
-      - name: prune to single latest release (single-present-release discipline)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: .github/scripts/prune-old-releases.sh

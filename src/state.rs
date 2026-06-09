@@ -8,12 +8,16 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Cache subdirectory under the OS cache root.
 const APP_DIR: &str = "lintmax-rs";
+/// Toolchain-refresh window in seconds (one day).
+const REFRESH_WINDOW: u64 = 86_400;
 /// FNV-1a 64-bit offset basis.
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 /// FNV-1a 64-bit prime.
@@ -48,6 +52,28 @@ impl State {
             drop(fs::write(path, raw));
         }
     }
+}
+
+/// Unix seconds now, zero when the clock is unreadable.
+fn now_secs() -> u64 {
+    return SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |dur| return dur.as_secs());
+}
+
+/// Whether the toolchain-refresh window has elapsed since the last refresh.
+#[inline]
+#[must_use]
+pub fn refresh_due() -> bool {
+    return now_secs().saturating_sub(load().last_check) >= REFRESH_WINDOW;
+}
+
+/// Records the current time as the last toolchain refresh.
+#[inline]
+pub fn mark_refreshed() {
+    let mut st = load();
+    st.last_check = now_secs();
+    st.save();
 }
 
 /// Current working directory as a string key, when resolvable.

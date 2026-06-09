@@ -1,6 +1,6 @@
 /target
 Cargo.lock
-lcov.info
+.DS_Store
 .editorconfig
 rust-analyzer.toml
 .githooks
