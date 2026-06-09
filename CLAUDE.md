@@ -188,7 +188,7 @@ The binary shells out to these tools (must be installed):
 - `write_configs()` writes temp files before checks, `clean_configs()` removes them after
 - If a config file already exists with different content (user-customized), lintmax does NOT overwrite it
 - If the file matches embedded content exactly, it is cleaned up (considered lintmax-managed)
-- `cargo lintmax sync` writes managed files: `.githooks/pre-commit`, `.github/workflows/ci.yml`, `.gitignore`, `.editorconfig`, `rust-analyzer.toml`, `CLAUDE.md`
+- The only files lintmax writes in a consumer are the temp linter configs above, removed after the run; it never scaffolds consumer project files
 
 ## Testing the tool
 

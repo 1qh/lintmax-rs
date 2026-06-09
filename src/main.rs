@@ -27,29 +27,10 @@ const CLIPPY_TOML: &str = include_str!("../configs/clippy.toml");
 const DENY_TOML: &str = include_str!("../configs/deny.toml");
 /// Embedded dprint configuration.
 const DPRINT_JSON: &str = include_str!("../configs/dprint.json");
-/// Embedded editorconfig.
-const EDITORCONFIG: &str = include_str!("../configs/editorconfig");
-/// Embedded gitignore.
-const GITIGNORE: &str = include_str!("../configs/gitignore");
-/// CLAUDE.md content for AI agents.
-const CLAUDE_MD: &str = include_str!("../configs/CLAUDE.md");
-/// Git pre-commit hook content.
-const PRE_COMMIT: &str = "#!/bin/sh\ncargo lintmax\n";
-/// Embedded CI-run prune script synced into consumer repos.
-const PRUNE_CI_RUNS: &str = include_str!("../.github/scripts/prune-ci-runs.sh");
-/// Embedded release prune script synced into consumer repos.
-const PRUNE_OLD_RELEASES: &str = include_str!("../.github/scripts/prune-old-releases.sh");
-/// Embedded rust-analyzer configuration.
-const RUST_ANALYZER_TOML: &str = include_str!("../configs/rust-analyzer.toml");
 /// Embedded rustfmt configuration.
 const RUSTFMT_TOML: &str = include_str!("../configs/rustfmt.toml");
 /// Embedded typos configuration.
 const TYPOS_TOML: &str = include_str!("../configs/typos.toml");
-
-/// GitHub Actions CI workflow synced into consumer repos.
-const CI_YML: &str = include_str!("../configs/ci.yml");
-/// GitHub Actions release workflow synced into consumer repos.
-const RELEASE_YML: &str = include_str!("../configs/release.yml");
 
 /// Clippy lints to allow (contradicting pairs and impractical restrictions).
 #[rustfmt::skip]
@@ -272,7 +253,7 @@ fn is_lintmax_content(path: &Path, expected: &str) -> bool {
 fn main() -> ExitCode {
     let Cargo::Lintmax(cli) = Cargo::parse();
 
-    evolve();
+    refresh_toolchain();
     match cli.command {
         None | Some(Sub::Check) => return run_default(),
         Some(Sub::Version) => {
@@ -478,74 +459,6 @@ fn run_fmt_check() -> ExitCode {
     let result_rust = cmd("cargo", &["fmt", "--all", "--", "--check"]);
     let result_dprint = cmd("dprint", &["check"]);
     return worst(result_rust, result_dprint);
-}
-
-/// Self-evolving maintenance run on every invocation.
-///
-/// Refreshes the toolchain on cadence (force-latest under CI) and keeps the
-/// consumer's managed project files current (write-if-stale, idempotent). Skips
-/// lintmax-rs's own repo.
-fn evolve() {
-    refresh_toolchain();
-    if is_own_repo() {
-        return;
-    }
-    write_if_stale(".gitignore", GITIGNORE);
-    write_if_stale(".editorconfig", EDITORCONFIG);
-    write_if_stale("rust-analyzer.toml", RUST_ANALYZER_TOML);
-    write_if_stale("CLAUDE.md", CLAUDE_MD);
-    sync_managed_dir(
-        ".github/workflows",
-        &[("ci.yml", CI_YML), ("release.yml", RELEASE_YML)],
-    );
-    sync_managed_dir(
-        ".github/scripts",
-        &[
-            ("prune-ci-runs.sh", PRUNE_CI_RUNS),
-            ("prune-old-releases.sh", PRUNE_OLD_RELEASES),
-        ],
-    );
-    sync_pre_commit_hook();
-}
-
-/// Whether the current working tree is lintmax-rs's own repo (where the managed
-/// files are hand-maintained, not synced).
-fn is_own_repo() -> bool {
-    return fs::read_to_string("Cargo.toml")
-        .is_ok_and(|content| return content.contains("name = \"cargo-lintmax\""));
-}
-
-/// Writes the file only when missing or stale, never clobbering a consumer edit
-/// that diverged intentionally — staleness is exact-content mismatch against a
-/// previously lintmax-written file.
-fn write_if_stale(path: &str, content: &str) {
-    let current = fs::read_to_string(path).unwrap_or_default();
-    if current != content {
-        discard(fs::write(path, content));
-    }
-}
-
-/// Ensures a managed directory holds the current copy of each named file.
-fn sync_managed_dir(dir: &str, files: &[(&str, &str)]) {
-    discard(fs::create_dir_all(dir));
-    for &(name, content) in files {
-        write_if_stale(&format!("{dir}/{name}"), content);
-    }
-}
-
-/// Writes the pre-commit hook and points git at it (idempotent).
-fn sync_pre_commit_hook() {
-    discard(fs::create_dir_all(".githooks"));
-    write_if_stale(".githooks/pre-commit", PRE_COMMIT);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        discard(fs::set_permissions(
-            ".githooks/pre-commit",
-            fs::Permissions::from_mode(0o755),
-        ))
-    };
-    discard(cmd_quiet("git", &["config", "core.hooksPath", ".githooks"]));
 }
 
 /// Refreshes the toolchain to latest on a cadence: every run under CI, otherwise

@@ -19,8 +19,8 @@ cargo lintmax rules    # list the active rule set
 ```
 
 Everything else the tool does for itself, never as a command: toolchain
-`@latest` refresh on cadence (forced under CI), consumer CI/release-workflow
-currency, the green-tree-hash cache, and the dependency-staleness scan.
+`@latest` refresh on cadence (forced under CI), the green-tree-hash cache, and
+the dependency-staleness scan.
 
 ## What it does
 
