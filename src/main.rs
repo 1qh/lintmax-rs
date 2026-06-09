@@ -1,8 +1,14 @@
 //! `cargo lintmax` — maximum strictness Rust pipeline in one command.
 
+extern crate alloc;
+
+pub mod analyze;
 pub mod comment;
 pub mod dprint;
+pub mod staleness;
+pub mod state;
 
+use std::env;
 use std::fs;
 use std::io;
 use std::io::Write as _;
@@ -201,6 +207,10 @@ enum Sub {
     Fmt,
     /// Sync project files (hooks, CI, gitignore, CLAUDE.md).
     Sync,
+    /// Update cargo deps and dprint plugins to latest.
+    Update,
+    /// Self-update cargo-lintmax to the latest release.
+    Upgrade,
     /// Dev loop with bacon.
     Watch,
 }
@@ -296,6 +306,9 @@ fn is_lintmax_content(path: &Path, expected: &str) -> bool {
 fn main() -> ExitCode {
     let Cargo::Lintmax(cli) = Cargo::parse();
 
+    if cli.command.is_none() {
+        return run_default();
+    }
     let result = match cli.command {
         None => run_check_all(),
         Some(Sub::Ci) => run_ci(),
@@ -305,6 +318,8 @@ fn main() -> ExitCode {
         Some(Sub::Fix) => run_fix(),
         Some(Sub::Fmt) => run_fmt(),
         Some(Sub::Sync) => run_sync(),
+        Some(Sub::Update) => run_update(),
+        Some(Sub::Upgrade) => run_upgrade(),
         Some(Sub::Watch) => return run_watch(),
     };
     if result == ExitCode::SUCCESS {
@@ -315,7 +330,7 @@ fn main() -> ExitCode {
     return result;
 }
 
-/// Runs all checks with temporary configs.
+/// Runs all checks with temporary configs (no green-cache; used by CI paths).
 fn run_check_all() -> ExitCode {
     write_configs();
     let result = run_seq(&[
@@ -328,8 +343,97 @@ fn run_check_all() -> ExitCode {
         run_test,
         run_typos,
     ]);
+    run_advisories();
     clean_configs();
     return result;
+}
+
+/// Cargo package version, baked in at compile time.
+const fn pkg_version() -> &'static str {
+    return env!("CARGO_PKG_VERSION");
+}
+
+/// Whether the gate runs under CI (where the green-cache is bypassed so a fresh
+/// run always validates).
+fn in_ci() -> bool {
+    return env::var("CI").is_ok() || env::var("GITHUB_ACTIONS").is_ok();
+}
+
+/// Default gate: short-circuits with `ok (cached)` when the working tree is
+/// unchanged since the last clean run, otherwise runs the full gate and records
+/// the green tree-hash on success.
+fn run_default() -> ExitCode {
+    let key = (!in_ci())
+        .then(|| return state::tree_hash(pkg_version()))
+        .flatten();
+    if let (Some(hash), Some(cwd)) = (key.as_ref(), state::cwd_key())
+        && state::load().last_green_by_cwd.get(&cwd) == Some(hash)
+    {
+        emit("ok (cached)");
+        return ExitCode::SUCCESS;
+    }
+    let result = run_check_all();
+    if result == ExitCode::SUCCESS {
+        persist_green(key.as_ref());
+        emit("ok");
+    }
+    return result;
+}
+
+/// Records the current tree-hash as the cwd's last green run.
+fn persist_green(hash: Option<&String>) {
+    if let (Some(digest), Some(cwd)) = (hash, state::cwd_key()) {
+        let mut st = state::load();
+        discard(st.last_green_by_cwd.insert(cwd, digest.clone()));
+        st.save();
+    }
+}
+
+/// Writes a line to stdout and flushes.
+fn emit(line: &str) {
+    let mut stdout = io::stdout();
+    discard(writeln!(stdout, "{line}"));
+    discard(stdout.flush());
+}
+
+/// Emits one advisory block to stderr when its body is non-empty.
+fn advisory(prefix: &str, body: &str) {
+    if !body.is_empty() {
+        discard(write!(io::stderr(), "advisory: {prefix}{body}"));
+    }
+}
+
+/// Runs the non-failing in-house advisories.
+///
+/// Covers the dependency staleness scan plus the dupconst, gibberish-identifier,
+/// and unguarded-float-division analyzers. All print to stderr and never change
+/// the exit code (advisory phases).
+fn run_advisories() {
+    let stale = staleness::scan(Path::new("."));
+    advisory(
+        &format!(
+            "{} dep(s) behind latest (bump toward active-maintenance window):\n",
+            stale.len()
+        ),
+        &staleness::format(&stale),
+    );
+    let dups = analyze::dupconst();
+    advisory(
+        &format!(
+            "{} duplicate-value const group(s) (collapse to one):\n",
+            dups.len()
+        ),
+        &analyze::format_dupconst(&dups),
+    );
+    advisory("", &analyze::format_gibberish(&analyze::gibberish()));
+    let fdiv = analyze::floatdiv();
+    advisory(
+        &format!(
+            "{} unguarded float-division site(s) (NaN/Inf risk on empty input):\n",
+            fdiv.len()
+        ),
+        &analyze::format_floatdiv(&fdiv),
+    );
 }
 
 /// Runs clean, update, then all checks.
@@ -668,6 +772,20 @@ fn run_update() -> ExitCode {
     discard(cmd("cargo", &["update"]));
     discard(cmd("dprint", &["config", "update"]));
     return ExitCode::SUCCESS;
+}
+
+/// Self-updates cargo-lintmax to the latest published release.
+fn run_upgrade() -> ExitCode {
+    return cmd(
+        "cargo",
+        &[
+            "install",
+            "--force",
+            "--git",
+            "https://github.com/1qh/lintmax-rs",
+            "cargo-lintmax",
+        ],
+    );
 }
 
 /// Starts bacon dev loop.
