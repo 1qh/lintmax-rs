@@ -25,7 +25,7 @@ fn foo() -> i32 {
 - `missing_docs` is `forbid` (rustc) and `missing_docs_in_private_items` is active (clippy restriction)
 - Every `fn`, `const`, `struct`, `enum`, variant, and field needs `///`
 - Crate root needs `//!`
-- No `//` comments allowed anywhere — enforced by `rg` check in pipeline
+- No `//` comments allowed anywhere, line-leading OR trailing-inline — a span-aware scanner (`src/comment.rs`) flags/strips them while preserving `///`, `//!`, and `//` inside strings/char/raw-string literals
 - `# Panics` section required on any fn that can panic (`missing_panics_doc` from pedantic)
 
 ### Discarding results: the `discard()` pattern
@@ -179,8 +179,8 @@ The binary shells out to these tools (must be installed):
 - `cargo llvm-cov` — coverage
 - `dprint` — TOML/JSON/YAML/Markdown formatting
 - `typos` — spell checking
-- `rg` (ripgrep) — comment detection
-- `perl` — comment removal in `fix` subcommand
+- `rg` (ripgrep) — source file enumeration
+- `curl` — resolving latest dprint plugin versions (never-stale)
 - `bacon` — dev loop (watch mode)
 
 ## Config file behavior

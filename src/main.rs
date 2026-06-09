@@ -1,5 +1,8 @@
 //! `cargo lintmax` — maximum strictness Rust pipeline in one command.
 
+pub mod comment;
+pub mod dprint;
+
 use std::fs;
 use std::io;
 use std::io::Write as _;
@@ -205,14 +208,44 @@ enum Sub {
 /// Discards a result, satisfying must-use and drop lints.
 fn discard<T>(_value: T) {}
 
-/// Removes temporary config files if they match embedded content.
+/// Removes temporary config files lintmax owns: an exact embedded match, or a
+/// dprint.json that is the embedded default with only its plugin versions bumped.
 fn clean_configs() {
     for (name, content) in MANAGED_CONFIGS {
         let path = config_path(name);
-        if is_lintmax_content(&path, content) {
+        let owned = is_lintmax_content(&path, content)
+            || (*name == "dprint.json" && is_bumped_dprint(&path, content));
+        if owned {
             discard(fs::remove_file(path));
         }
     }
+}
+
+/// Strips the version segment from a single dprint plugin URL line.
+fn normalize_dprint_line(line: &str) -> String {
+    let is_plugin = line
+        .trim_start()
+        .starts_with("\"https://plugins.dprint.dev/");
+    if let (true, Some(start)) = (is_plugin, line.rfind('/')) {
+        return line.get(..=start).unwrap_or(line).to_owned();
+    }
+    return line.to_owned();
+}
+
+/// Drops the `-<version>` segment from every dprint plugin URL so a bumped
+/// config compares equal to the embedded seed.
+fn normalize_dprint(text: &str) -> String {
+    return text
+        .lines()
+        .map(normalize_dprint_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+}
+
+/// Whether the file is the embedded dprint.json with only plugin versions changed.
+fn is_bumped_dprint(path: &Path, embedded: &str) -> bool {
+    return fs::read_to_string(path)
+        .is_ok_and(|content| return normalize_dprint(&content) == normalize_dprint(embedded));
 }
 
 /// Runs an external command.
@@ -234,6 +267,21 @@ fn cmd_env(program: &str, args: &[&str], env_vars: &[(&str, &str)]) -> ExitCode 
     };
 }
 
+/// Runs a command, buffering its output; prints captured stdout+stderr only on
+/// failure so a clean run stays silent (token-efficient `ok`-on-success).
+fn cmd_quiet(program: &str, args: &[&str]) -> ExitCode {
+    let output = Command::new(program).args(args).output();
+    return match output {
+        Ok(out) if out.status.success() => ExitCode::SUCCESS,
+        Ok(out) => {
+            discard(io::stdout().write_all(&out.stdout));
+            discard(io::stderr().write_all(&out.stderr));
+            ExitCode::from(u8::try_from(out.status.code().unwrap_or(1)).unwrap_or(1))
+        }
+        Err(_) => ExitCode::FAILURE,
+    };
+}
+
 /// Returns path for a config file name.
 fn config_path(name: &str) -> PathBuf {
     return PathBuf::from(name);
@@ -241,16 +289,14 @@ fn config_path(name: &str) -> PathBuf {
 
 /// Checks if file content matches expected embedded content.
 fn is_lintmax_content(path: &Path, expected: &str) -> bool {
-    return fs::read_to_string(path)
-        .map(|content| return content == expected)
-        .unwrap_or(true);
+    return fs::read_to_string(path).map_or(true, |content| return content == expected);
 }
 
 /// Entry point.
 fn main() -> ExitCode {
     let Cargo::Lintmax(cli) = Cargo::parse();
 
-    return match cli.command {
+    let result = match cli.command {
         None => run_check_all(),
         Some(Sub::Ci) => run_ci(),
         Some(Sub::CiRemote) => run_ci_remote(),
@@ -259,8 +305,14 @@ fn main() -> ExitCode {
         Some(Sub::Fix) => run_fix(),
         Some(Sub::Fmt) => run_fmt(),
         Some(Sub::Sync) => run_sync(),
-        Some(Sub::Watch) => run_watch(),
+        Some(Sub::Watch) => return run_watch(),
     };
+    if result == ExitCode::SUCCESS {
+        let mut stdout = io::stdout();
+        discard(writeln!(stdout, "ok"));
+        discard(stdout.flush());
+    }
+    return result;
 }
 
 /// Runs all checks with temporary configs.
@@ -354,7 +406,7 @@ fn run_cov_ci() -> ExitCode {
 
 /// Runs cargo-deny dependency audit.
 fn run_deny() -> ExitCode {
-    return cmd("cargo", &["deny", "-L", "error", "check"]);
+    return cmd_quiet("cargo", &["deny", "-L", "error", "check"]);
 }
 
 /// Builds docs with warnings denied.
@@ -423,7 +475,6 @@ fn run_sync() -> ExitCode {
     patch_cargo_toml();
     patch_main_rs();
     discard(run_fix());
-    discard(writeln!(io::stderr(), "synced"));
     return ExitCode::SUCCESS;
 }
 
@@ -486,39 +537,84 @@ fn run_lint() -> ExitCode {
 
 /// Runs cargo-machete unused dependency check.
 fn run_machete() -> ExitCode {
-    return cmd("cargo", &["machete"]);
+    return cmd_quiet("cargo", &["machete"]);
 }
 
-/// Checks that no `//` comments exist in rust source.
-fn run_no_comments() -> ExitCode {
+/// Source files scanned for comments (any hand-written `.rs` under `src/`).
+fn source_files() -> Vec<PathBuf> {
     let output = Command::new("rg")
-        .args(["--quiet", r"^\s*//[^/!]", "-t", "rust", "src/"])
-        .status();
+        .args(["--files", "-t", "rust", "src/"])
+        .output();
     return match output {
-        Ok(status) if status.success() => {
-            discard(writeln!(
-                io::stderr(),
-                "error: found // comments in source (only /// doc comments allowed)"
-            ));
-            ExitCode::FAILURE
-        }
-        _ => ExitCode::SUCCESS,
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|line| return !line.is_empty())
+            .map(PathBuf::from)
+            .collect(),
+        Err(_) => Vec::new(),
     };
 }
 
-/// Removes `//` comments from rust source files.
+/// Reports any non-survivor `//` comment lines in one file, returning if found.
+fn report_comments(path: &Path, content: &str) -> bool {
+    let mut found = false;
+    for (num, line) in content.lines().enumerate() {
+        if comment::strip_line(line).1 {
+            found = true;
+            discard(writeln!(
+                io::stderr(),
+                "{}:{}: // comment (only /// and //! doc comments allowed)",
+                path.display(),
+                num.saturating_add(1)
+            ));
+        }
+    }
+    return found;
+}
+
+/// Checks that no non-survivor `//` comments exist in rust source.
+fn run_no_comments() -> ExitCode {
+    let mut found = false;
+    for path in source_files() {
+        if let Ok(content) = fs::read_to_string(&path) {
+            found |= report_comments(&path, &content);
+        }
+    }
+    if found {
+        return ExitCode::FAILURE;
+    }
+    return ExitCode::SUCCESS;
+}
+
+/// Strips comments from a file's content, returning the new text if it changed.
+fn strip_content(content: &str) -> Option<String> {
+    let mut changed = false;
+    let mut out_lines: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let (stripped, removed) = comment::strip_line(line);
+        changed |= removed;
+        if removed && stripped.is_empty() {
+            continue;
+        }
+        out_lines.push(stripped);
+    }
+    if !changed {
+        return None;
+    }
+    let mut joined = out_lines.join("\n");
+    if content.ends_with('\n') {
+        joined.push('\n');
+    }
+    return Some(joined);
+}
+
+/// Removes non-survivor `//` comments from rust source files.
 fn run_remove_comments() -> ExitCode {
-    let output = Command::new("rg")
-        .args(["-l", r"^\s*//[^/!]", "-t", "rust", "src/"])
-        .output();
-    if let Ok(out) = output {
-        let files = String::from_utf8_lossy(&out.stdout);
-        for file in files.lines().filter(|line| return !line.is_empty()) {
-            discard(
-                Command::new("perl")
-                    .args(["-ni", "-e", r"print unless /^\s*\/\/[^\/!]/", file])
-                    .status(),
-            );
+    for path in source_files() {
+        if let Ok(content) = fs::read_to_string(&path)
+            && let Some(joined) = strip_content(&content)
+        {
+            discard(fs::write(&path, joined));
         }
     }
     return ExitCode::SUCCESS;
@@ -537,7 +633,7 @@ fn run_seq(steps: &[fn() -> ExitCode]) -> ExitCode {
 
 /// Runs tests with nextest and doc tests.
 fn run_test() -> ExitCode {
-    let result = cmd(
+    let result = cmd_quiet(
         "cargo",
         &[
             "nextest",
@@ -598,9 +694,36 @@ fn write_config(name: &str, content: &str) {
     discard(fs::write(&path, content));
 }
 
-/// Writes all temporary config files.
+/// Writes all temporary config files, then bumps dprint plugins to latest so
+/// the embedded version pins are only a bootstrap seed, never a stale lock.
 fn write_configs() {
     for (name, content) in MANAGED_CONFIGS {
         write_config(name, content);
+    }
+    bump_dprint_plugins();
+}
+
+/// Rewrites the written dprint config's plugin URLs to latest so the embedded
+/// version pins are only a bootstrap seed, never a stale lock.
+fn bump_dprint_plugins() {
+    let path = config_path("dprint.json");
+    if let Ok(content) = fs::read_to_string(&path)
+        && let Some(bumped) = dprint::bump(&content)
+    {
+        discard(fs::write(&path, bumped));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_dprint;
+
+    /// # Panics
+    /// On assertion failure.
+    #[test]
+    fn normalize_strips_plugin_version() {
+        let pinned = "\"https://plugins.dprint.dev/toml-0.7.0.wasm\",";
+        let other = "\"https://plugins.dprint.dev/toml-0.9.9.wasm\",";
+        assert_eq!(normalize_dprint(pinned), normalize_dprint(other));
     }
 }
