@@ -24,3 +24,20 @@ jobs:
         with:
           name: coverage
           path: lcov.info
+  prune-history:
+    needs: [ci]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+      - name: prune all prior CI runs (single-present-run discipline)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP_RUN_ID: ${{ github.run_id }}
+        run: .github/scripts/prune-ci-runs.sh
