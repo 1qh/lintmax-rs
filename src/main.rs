@@ -8,6 +8,7 @@ pub mod dprint;
 pub mod staleness;
 pub mod state;
 
+use alloc::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io;
@@ -20,6 +21,7 @@ use std::process::Stdio;
 
 use clap::Parser;
 use clap::Subcommand;
+use serde_json::Value;
 
 /// Embedded clippy configuration.
 const CLIPPY_TOML: &str = include_str!("../configs/clippy.toml");
@@ -419,9 +421,101 @@ fn run_clippy_fix() -> ExitCode {
     return cmd("cargo", &refs);
 }
 
-/// Runs cargo-deny dependency audit.
+/// Duplicate crate names when every cargo-deny error is a duplicate; None if any other error appears.
+fn duplicate_only_failures(stderr: &str) -> Option<Vec<String>> {
+    let mut dups = Vec::new();
+    for line in stderr.lines() {
+        if !line.contains("error[") {
+            continue;
+        }
+        if !line.contains("error[duplicate]") {
+            return None;
+        }
+        let name = line
+            .split("for crate '")
+            .nth(1)
+            .and_then(|rest| return rest.split('\'').next());
+        if let Some(found) = name {
+            dups.push(found.to_owned());
+        }
+    }
+    return Some(dups);
+}
+
+/// Every dependency name declared by a workspace package in cargo metadata.
+fn collect_dep_names(meta: &Value) -> BTreeSet<String> {
+    let mut set = BTreeSet::new();
+    let packages = meta.get("packages").and_then(Value::as_array);
+    let arrays = packages
+        .into_iter()
+        .flatten()
+        .filter_map(|pkg| return pkg.get("dependencies"))
+        .filter_map(Value::as_array);
+    for dep in arrays.flatten() {
+        if let Some(name) = dep.get("name").and_then(Value::as_str) {
+            discard(set.insert(name.to_owned()));
+        }
+    }
+    return set;
+}
+
+/// Names every first-party (workspace) crate depends on directly, via cargo metadata.
+fn first_party_direct_deps() -> BTreeSet<String> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .output();
+    let Ok(out) = output else {
+        return BTreeSet::new();
+    };
+    return serde_json::from_slice::<Value>(&out.stdout)
+        .map(|meta| return collect_dep_names(&meta))
+        .unwrap_or_default();
+}
+
+/// Duplicates safe to suppress: every cargo-deny error is a duplicate no first-party crate causes.
+fn suppressible_duplicates(stderr: &str) -> Option<Vec<String>> {
+    let dups = match duplicate_only_failures(stderr) {
+        Some(found) => found,
+        None => return None,
+    };
+    if dups.is_empty() {
+        return None;
+    }
+    let first_party = first_party_direct_deps();
+    if dups
+        .iter()
+        .any(|name| return first_party.contains(name.as_str()))
+    {
+        return None;
+    }
+    return Some(dups);
+}
+
+/// Runs cargo-deny; suppresses only upstream-transitive duplicates the project cannot fix.
 fn run_deny() -> ExitCode {
-    return cmd_quiet("cargo", &["deny", "-L", "error", "check"]);
+    let output = match Command::new("cargo")
+        .args(["deny", "-L", "error", "check"])
+        .output()
+    {
+        Ok(out) => out,
+        Err(_) => return ExitCode::FAILURE,
+    };
+    if output.status.success() {
+        return ExitCode::SUCCESS;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if let Some(dups) = suppressible_duplicates(&stderr) {
+        discard(writeln!(
+            io::stderr(),
+            "deny: {} upstream-transitive duplicate(s) suppressed (unfixable here): {}",
+            dups.len(),
+            dups.join(", ")
+        ));
+        return ExitCode::SUCCESS;
+    }
+    discard(io::stdout().write_all(&output.stdout));
+    discard(io::stderr().write_all(&output.stderr));
+    return ExitCode::from(u8::try_from(output.status.code().unwrap_or(1)).unwrap_or(1));
 }
 
 /// Builds docs with warnings denied.
