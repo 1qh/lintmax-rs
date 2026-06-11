@@ -459,6 +459,69 @@ fn collect_dep_names(meta: &Value) -> BTreeSet<String> {
     return set;
 }
 
+/// Package ids that are workspace (first-party) members.
+fn workspace_member_ids(meta: &Value) -> BTreeSet<String> {
+    let mut set = BTreeSet::new();
+    let members = meta.get("workspace_members").and_then(Value::as_array);
+    for id in members.into_iter().flatten() {
+        if let Some(text) = id.as_str() {
+            discard(set.insert(text.to_owned()));
+        }
+    }
+    return set;
+}
+
+/// True when a package is local (path/null source) and not a workspace member:
+/// vendored external code we consume but do not author.
+fn is_vendored_package(pkg: &Value, members: &BTreeSet<String>) -> bool {
+    let local = pkg.get("source").is_none_or(Value::is_null);
+    let member = pkg
+        .get("id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| return members.contains(id));
+    return local && !member;
+}
+
+/// The `dir/**` exclude glob for a package's directory, relative to cwd.
+fn package_dir_glob(pkg: &Value, cwd: &Path) -> Option<String> {
+    let manifest = match pkg.get("manifest_path").and_then(Value::as_str) {
+        Some(text) => text,
+        None => return None,
+    };
+    let dir = match Path::new(manifest).parent() {
+        Some(parent) => parent,
+        None => return None,
+    };
+    let rel = dir.strip_prefix(cwd).unwrap_or(dir);
+    return Some(format!("{}/**", rel.display()));
+}
+
+/// Exclude globs for vendored external packages (local non-workspace crates).
+///
+/// Like registry dependencies, vendored crates are compiled but not linted;
+/// detected via cargo metadata, never by directory name, so no first-party
+/// source can be excluded by accident.
+fn vendored_excludes() -> Vec<String> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1"])
+        .output();
+    let Ok(out) = output else {
+        return Vec::new();
+    };
+    let Ok(meta) = serde_json::from_slice::<Value>(&out.stdout) else {
+        return Vec::new();
+    };
+    let members = workspace_member_ids(&meta);
+    let cwd = env::current_dir().unwrap_or_default();
+    let packages = meta.get("packages").and_then(Value::as_array);
+    return packages
+        .into_iter()
+        .flatten()
+        .filter(|pkg| return is_vendored_package(pkg, &members))
+        .filter_map(|pkg| return package_dir_glob(pkg, &cwd))
+        .collect();
+}
+
 /// Names every first-party (workspace) crate depends on directly, via cargo metadata.
 fn first_party_direct_deps() -> BTreeSet<String> {
     let output = Command::new("cargo")
@@ -544,15 +607,38 @@ fn run_fix() -> ExitCode {
 /// Formats rust and all other files.
 fn run_fmt_all() -> ExitCode {
     discard(cmd("cargo", &["fmt", "--all"]));
-    discard(cmd("dprint", &["fmt"]));
+    discard(run_dprint("fmt"));
     return ExitCode::SUCCESS;
 }
 
 /// Checks formatting of rust and all other files.
 fn run_fmt_check() -> ExitCode {
     let result_rust = cmd("cargo", &["fmt", "--all", "--", "--check"]);
-    let result_dprint = cmd("dprint", &["check"]);
+    let result_dprint = run_dprint("check");
     return worst(result_rust, result_dprint);
+}
+
+/// Runs a dprint action, excluding vendored external package directories.
+fn run_dprint(action: &str) -> ExitCode {
+    let mut args = vec![action.to_owned()];
+    let globs = vendored_excludes();
+    if !globs.is_empty() {
+        args.push("--excludes".to_owned());
+        args.extend(globs);
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    return cmd("dprint", &refs);
+}
+
+/// Runs typos with the given extra args, excluding vendored external directories.
+fn run_typos_excluded(extra: &[&str]) -> ExitCode {
+    let mut args: Vec<String> = extra.iter().map(|arg| return (*arg).to_owned()).collect();
+    for glob in vendored_excludes() {
+        args.push("--exclude".to_owned());
+        args.push(glob);
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    return cmd("typos", &refs);
 }
 
 /// Refreshes the toolchain to latest on a cadence: every run under CI, otherwise
@@ -796,12 +882,12 @@ fn run_test() -> ExitCode {
 
 /// Checks for typos in source.
 fn run_typos() -> ExitCode {
-    return cmd("typos", &[]);
+    return run_typos_excluded(&[]);
 }
 
 /// Auto-fixes typos in source.
 fn run_typos_fix() -> ExitCode {
-    return cmd("typos", &["-w"]);
+    return run_typos_excluded(&["-w"]);
 }
 
 /// Prints the active rule set: every clippy group denied, the rustc forbid/deny
