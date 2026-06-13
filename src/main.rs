@@ -39,6 +39,7 @@ const TYPOS_TOML: &str = include_str!("../configs/typos.toml");
 const CLIPPY_ALLOW: &[&str] = &[
     "clippy::blanket_clippy_restriction_lints",
     "clippy::exhaustive_enums",
+    "clippy::multiple_crate_versions",
     "clippy::exhaustive_structs",
     "clippy::needless_return",
     "clippy::pattern_type_mismatch",
