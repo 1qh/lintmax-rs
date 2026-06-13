@@ -21,6 +21,7 @@ min-ident-chars-threshold = 1
 allowed-idents-below-min-chars = ["f", "i", "j", "n", "x", "y", "_"]
 disallowed-names = ["foo", "bar", "baz", "quux", "tmp", "temp"]
 
+source-item-ordering = ["impl", "module", "struct", "trait"]
 warn-on-all-wildcard-imports = true
 check-private-items = true
 accept-comment-above-attributes = true
