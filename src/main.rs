@@ -678,7 +678,22 @@ fn run_lint() -> ExitCode {
 
 /// Runs cargo-machete unused dependency check.
 fn run_machete() -> ExitCode {
-    return cmd_quiet("cargo", &["machete"]);
+    let excludes = vendored_excludes();
+    let ignore_path = config_path(".ignore");
+    if excludes.is_empty() || ignore_path.exists() {
+        return cmd_quiet("cargo", &["machete"]);
+    }
+    let body: String = excludes
+        .iter()
+        .map(|glob| return glob.strip_suffix("**").unwrap_or(glob).to_owned())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if fs::write(&ignore_path, body).is_err() {
+        return cmd_quiet("cargo", &["machete"]);
+    }
+    let result = cmd_quiet("cargo", &["machete"]);
+    discard(fs::remove_file(&ignore_path));
+    return result;
 }
 
 /// Collects the stdout lines of an rg invocation as deduplicated paths,
