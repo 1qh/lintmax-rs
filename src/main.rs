@@ -301,7 +301,7 @@ fn rustfmt_with_ignores() -> String {
     }
     let entries: String = dirs
         .iter()
-        .map(|dir| return format!("    \"{dir}\",\n"))
+        .map(|dir| return format!("  \"{dir}\",\n"))
         .collect();
     return format!("{RUSTFMT_TOML}{RUSTFMT_IGNORE_MARKER}ignore = [\n{entries}]\n");
 }
