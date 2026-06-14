@@ -17,7 +17,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::ExitCode;
-use std::process::Stdio;
 
 use clap::Parser;
 use clap::Subcommand;
@@ -876,7 +875,7 @@ fn run_seq(steps: &[fn() -> ExitCode]) -> ExitCode {
 
 /// Runs tests with nextest and doc tests.
 fn run_test() -> ExitCode {
-    let result = cmd_quiet(
+    let unit = cmd_quiet(
         "cargo",
         &[
             "nextest",
@@ -887,13 +886,27 @@ fn run_test() -> ExitCode {
             "--final-status-level=fail",
         ],
     );
-    discard(
-        Command::new("cargo")
-            .args(["test", "--doc", "--quiet"])
-            .stderr(Stdio::null())
-            .status(),
-    );
-    return result;
+    return worst(unit, run_doctests());
+}
+
+/// Runs doctests, gating on real failures. A crate with no library target has no
+/// doctests to run, which is success rather than an error.
+fn run_doctests() -> ExitCode {
+    let output = Command::new("cargo")
+        .args(["test", "--doc", "--all-features", "--quiet"])
+        .output();
+    let Ok(out) = output else {
+        return ExitCode::FAILURE;
+    };
+    if out.status.success() {
+        return ExitCode::SUCCESS;
+    }
+    if String::from_utf8_lossy(&out.stderr).contains("no library targets found") {
+        return ExitCode::SUCCESS;
+    }
+    discard(io::stdout().write_all(&out.stdout));
+    discard(io::stderr().write_all(&out.stderr));
+    return ExitCode::from(u8::try_from(out.status.code().unwrap_or(1)).unwrap_or(1));
 }
 
 /// Checks for typos in source.
