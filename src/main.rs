@@ -29,6 +29,8 @@ const DPRINT_JSON: &str = include_str!("../configs/dprint.json");
 const RUSTFMT_TOML: &str = include_str!("../configs/rustfmt.toml");
 /// Embedded typos configuration.
 const TYPOS_TOML: &str = include_str!("../configs/typos.toml");
+/// Marker delimiting the computed vendored-ignore block appended to rustfmt.toml.
+const RUSTFMT_IGNORE_MARKER: &str = "\n# lintmax: vendored crates excluded from formatting\n";
 
 /// Clippy lints to allow (contradicting pairs and impractical restrictions).
 #[rustfmt::skip]
@@ -170,7 +172,8 @@ fn clean_configs() {
     for (name, content) in MANAGED_CONFIGS {
         let path = config_path(name);
         let owned = is_lintmax_content(&path, content)
-            || (*name == "dprint.json" && is_bumped_dprint(&path, content));
+            || (*name == "dprint.json" && is_bumped_dprint(&path, content))
+            || (*name == "rustfmt.toml" && is_lintmax_rustfmt(&path));
         if owned {
             discard(fs::remove_file(path));
         }
@@ -287,6 +290,36 @@ fn config_path(name: &str) -> PathBuf {
 /// Checks if file content matches expected embedded content.
 fn is_lintmax_content(path: &Path, expected: &str) -> bool {
     return fs::read_to_string(path).map_or(true, |content| return content == expected);
+}
+
+/// Builds the rustfmt config augmented with an `ignore` list for vendored crates
+/// so the formatter skips them exactly as the lint stages do.
+fn rustfmt_with_ignores() -> String {
+    let dirs: Vec<String> = vendored_excludes()
+        .iter()
+        .map(|glob| return glob.strip_suffix("/**").unwrap_or(glob).to_owned())
+        .collect();
+    if dirs.is_empty() {
+        return RUSTFMT_TOML.to_owned();
+    }
+    let entries: String = dirs
+        .iter()
+        .map(|dir| return format!("    \"{dir}\",\n"))
+        .collect();
+    return format!("{RUSTFMT_TOML}{RUSTFMT_IGNORE_MARKER}ignore = [\n{entries}]\n");
+}
+
+/// Whether the file is the embedded rustfmt.toml, optionally carrying the
+/// computed vendored-ignore block appended after the marker.
+fn is_lintmax_rustfmt(path: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(path) else {
+        return true;
+    };
+    let head = content
+        .split(RUSTFMT_IGNORE_MARKER)
+        .next()
+        .unwrap_or(&content);
+    return head == RUSTFMT_TOML;
 }
 
 /// Entry point.
@@ -1017,10 +1050,15 @@ fn worst(first: ExitCode, second: ExitCode) -> ExitCode {
 /// Writes a config file if it does not exist or matches embedded content.
 fn write_config(name: &str, content: &str) {
     let path = config_path(name);
-    if path.exists() && !is_lintmax_content(&path, content) {
+    let (final_content, owned) = if name == "rustfmt.toml" {
+        (rustfmt_with_ignores(), is_lintmax_rustfmt(&path))
+    } else {
+        (content.to_owned(), is_lintmax_content(&path, content))
+    };
+    if path.exists() && !owned {
         return;
     }
-    discard(fs::write(&path, content));
+    discard(fs::write(&path, final_content));
 }
 
 /// Writes all temporary config files, then bumps dprint plugins to latest so
