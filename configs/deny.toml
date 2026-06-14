@@ -3,6 +3,8 @@ all-features = true
 
 [advisories]
 ignore = []
+yanked = "deny"
+unmaintained = "all"
 
 [output]
 feature-depth = 1
