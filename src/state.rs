@@ -4,15 +4,14 @@
 //! unchanged re-run short-circuits with `ok (cached)`.
 
 use alloc::collections::BTreeMap;
-use std::env;
-use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
+use std::{
+    env, fs,
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Cache subdirectory under the OS cache root.
 const APP_DIR: &str = "lintmax-rs";

@@ -6,9 +6,7 @@
 //! advisory-then-gating findings the standard linters miss.
 
 use alloc::collections::BTreeMap;
-use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use std::{fs, path::PathBuf, process::Command};
 
 /// Minimum distinct names sharing a value before it counts as a duplicate.
 const MIN_DUP_NAMES: usize = 2;
@@ -356,10 +354,7 @@ fn sources() -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_guarded;
-    use super::looks_gibberish;
-    use super::parse_const;
-    use super::risky_float_div;
+    use super::{is_guarded, looks_gibberish, parse_const, risky_float_div};
 
     /// # Panics
     /// On assertion failure.

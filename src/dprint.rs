@@ -106,8 +106,7 @@ pub fn bump(config: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_url;
-    use super::plugin_path;
+    use super::{extract_url, plugin_path};
 
     /// # Panics
     /// On assertion failure.

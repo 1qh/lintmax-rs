@@ -4,11 +4,7 @@
 //! Actions pins against GitHub releases, warning (advisory, never failing) when
 //! a pin is behind the active-maintenance window.
 
-use std::env;
-use std::fs;
-use std::path::Path;
-use std::process::Command;
-use std::thread;
+use std::{env, fs, path::Path, process::Command, thread};
 
 /// Environment flag that disables the scan entirely.
 const ENV_SKIP: &str = "LINTMAX_SKIP_STALENESS";
@@ -326,10 +322,7 @@ fn resolve(pins: Vec<Pin>, check: Resolver) -> Vec<Issue> {
 
 #[cfg(test)]
 mod tests {
-    use super::json_string_field;
-    use super::major;
-    use super::parse_dep_line;
-    use super::same_major;
+    use super::{json_string_field, major, parse_dep_line, same_major};
 
     /// # Panics
     /// On assertion failure.
