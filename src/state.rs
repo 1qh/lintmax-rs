@@ -18,9 +18,9 @@ const APP_DIR: &str = "lintmax-rs";
 /// Toolchain-refresh window in seconds (one day).
 const REFRESH_WINDOW: u64 = 86_400;
 /// FNV-1a 64-bit offset basis.
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
 /// FNV-1a 64-bit prime.
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
 /// State file name within the cache directory.
 const FILE_NAME: &str = "state.json";
 
@@ -122,7 +122,7 @@ fn hex16(value: u64) -> String {
     const NIBBLES: usize = 16;
     let mut out = String::with_capacity(NIBBLES);
     for shift in (0..NIBBLES).rev() {
-        let nibble = (value >> (shift.saturating_mul(4))) & 0xf;
+        let nibble = (value >> (shift.saturating_mul(4))) & 0xF;
         let Ok(idx) = usize::try_from(nibble) else {
             continue;
         };
