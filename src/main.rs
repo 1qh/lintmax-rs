@@ -409,6 +409,7 @@ fn build_lint_args() -> Vec<String> {
 fn run_clippy_fix() -> ExitCode {
     let mut args: Vec<String> = vec![
         "clippy".into(),
+        "--workspace".into(),
         "--all-targets".into(),
         "--all-features".into(),
         "--fix".into(),
@@ -585,7 +586,13 @@ fn run_deny() -> ExitCode {
 fn run_doc() -> ExitCode {
     return cmd_env(
         "cargo",
-        &["doc", "--no-deps", "--all-features", "--quiet"],
+        &[
+            "doc",
+            "--workspace",
+            "--no-deps",
+            "--all-features",
+            "--quiet",
+        ],
         &[("RUSTDOCFLAGS", "-D warnings")],
     );
 }
@@ -893,7 +900,7 @@ fn run_test() -> ExitCode {
 /// doctests to run, which is success rather than an error.
 fn run_doctests() -> ExitCode {
     let output = Command::new("cargo")
-        .args(["test", "--doc", "--all-features", "--quiet"])
+        .args(["test", "--workspace", "--doc", "--all-features", "--quiet"])
         .output();
     let Ok(out) = output else {
         return ExitCode::FAILURE;
