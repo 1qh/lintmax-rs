@@ -1064,10 +1064,40 @@ fn write_config(name: &str, content: &str) {
 /// Writes all temporary config files, then bumps dprint plugins to latest so
 /// the embedded version pins are only a bootstrap seed, never a stale lock.
 fn write_configs() {
+    ensure_tools();
     for (name, content) in MANAGED_CONFIGS {
         write_config(name, content);
     }
     bump_dprint_plugins();
+}
+
+/// Installs any absent cargo child tool the gate shells out to.
+///
+/// Uses cargo-binstall (fast prebuilt) or cargo install, so a fresh machine
+/// never fails the gate on a missing tool.
+fn ensure_tools() {
+    for &(bin, krate) in &[
+        ("cargo-deny", "cargo-deny"),
+        ("cargo-machete", "cargo-machete"),
+        ("cargo-nextest", "cargo-nextest"),
+        ("typos", "typos-cli"),
+    ] {
+        ensure_tool(bin, krate);
+    }
+}
+
+/// Installs one cargo tool when its binary is absent.
+fn ensure_tool(bin: &str, krate: &str) {
+    let present = Command::new(bin)
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| return out.status.success());
+    if present {
+        return;
+    }
+    if cmd_quiet("cargo", &["binstall", "--no-confirm", krate]) != ExitCode::SUCCESS {
+        discard(cmd_quiet("cargo", &["install", krate]));
+    }
 }
 
 /// Rewrites the written dprint config's plugin URLs to latest so the embedded
