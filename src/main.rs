@@ -9,17 +9,14 @@ pub mod staleness;
 pub mod state;
 
 use alloc::collections::BTreeSet;
-use std::env;
-use std::fs;
-use std::io;
-use std::io::Write as _;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-use std::process::ExitCode;
+use std::{
+    env, fs, io,
+    io::Write as _,
+    path::{Path, PathBuf},
+    process::{Command, ExitCode},
+};
 
-use clap::Parser;
-use clap::Subcommand;
+use clap::{Parser, Subcommand};
 use serde_json::Value;
 
 /// Embedded clippy configuration.
@@ -241,6 +238,47 @@ fn cmd_quiet(program: &str, args: &[&str]) -> ExitCode {
     };
 }
 
+/// Resolves the nightly rustfmt binary path used for strict (nightly-only) options.
+fn nightly_rustfmt() -> Option<String> {
+    let Ok(out) = Command::new("rustup")
+        .args(["which", "--toolchain", "nightly", "rustfmt"])
+        .output()
+    else {
+        return None;
+    };
+    if !out.status.success() {
+        return None;
+    }
+    let Ok(text) = String::from_utf8(out.stdout) else {
+        return None;
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    return Some(trimmed.to_owned());
+}
+
+/// Returns the nightly rustfmt path, installing the toolchain + component if absent.
+fn require_nightly_rustfmt() -> Option<String> {
+    if let Some(path) = nightly_rustfmt() {
+        return Some(path);
+    }
+    discard(cmd_quiet(
+        "rustup",
+        &[
+            "toolchain",
+            "install",
+            "nightly",
+            "--component",
+            "rustfmt",
+            "--profile",
+            "minimal",
+        ],
+    ));
+    return nightly_rustfmt();
+}
+
 /// Returns path for a config file name.
 fn config_path(name: &str) -> PathBuf {
     return PathBuf::from(name);
@@ -422,7 +460,8 @@ fn run_clippy_fix() -> ExitCode {
     return cmd("cargo", &refs);
 }
 
-/// Duplicate crate names when every cargo-deny error is a duplicate; None if any other error appears.
+/// Duplicate crate names when every cargo-deny error is a duplicate; None if any other error
+/// appears.
 fn duplicate_only_failures(stderr: &str) -> Option<Vec<String>> {
     let mut dups = Vec::new();
     for line in stderr.lines() {
@@ -613,14 +652,28 @@ fn run_fix() -> ExitCode {
 
 /// Formats rust and all other files.
 fn run_fmt_all() -> ExitCode {
-    discard(cmd("cargo", &["fmt", "--all"]));
+    if let Some(rustfmt) = require_nightly_rustfmt() {
+        discard(cmd_env(
+            "cargo",
+            &["fmt", "--all"],
+            &[("RUSTFMT", &rustfmt)],
+        ));
+    }
     discard(run_dprint("fmt"));
     return ExitCode::SUCCESS;
 }
 
 /// Checks formatting of rust and all other files.
 fn run_fmt_check() -> ExitCode {
-    let result_rust = cmd("cargo", &["fmt", "--all", "--", "--check"]);
+    let Some(rustfmt) = require_nightly_rustfmt() else {
+        emit("nightly rustfmt unavailable; required for strict formatting");
+        return ExitCode::FAILURE;
+    };
+    let result_rust = cmd_env(
+        "cargo",
+        &["fmt", "--all", "--", "--check"],
+        &[("RUSTFMT", &rustfmt)],
+    );
     let result_dprint = run_dprint("check");
     return worst(result_rust, result_dprint);
 }
