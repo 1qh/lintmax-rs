@@ -112,7 +112,11 @@ mod tests {
     /// On assertion failure.
     #[test]
     fn extracts_url_field() {
-        let body = r#"{"schemaVersion":1,"url":"https://plugins.dprint.dev/toml-0.7.0.wasm","version":"0.7.0"}"#;
+        let body = concat!(
+            r#"{"schemaVersion":1,"#,
+            r#""url":"https://plugins.dprint.dev/toml-0.7.0.wasm","#,
+            r#""version":"0.7.0"}"#,
+        );
         assert_eq!(
             extract_url(body),
             Some("https://plugins.dprint.dev/toml-0.7.0.wasm".to_owned())

@@ -236,7 +236,7 @@ fn cmd_quiet(program: &str, args: &[&str]) -> ExitCode {
             discard(io::stdout().write_all(&out.stdout));
             discard(io::stderr().write_all(&out.stderr));
             ExitCode::from(u8::try_from(out.status.code().unwrap_or(1)).unwrap_or(1))
-        }
+        },
         Err(_) => ExitCode::FAILURE,
     };
 }
@@ -267,18 +267,15 @@ fn require_nightly_rustfmt() -> Option<String> {
     if let Some(path) = nightly_rustfmt() {
         return Some(path);
     }
-    discard(cmd_quiet(
-        "rustup",
-        &[
-            "toolchain",
-            "install",
-            "nightly",
-            "--component",
-            "rustfmt",
-            "--profile",
-            "minimal",
-        ],
-    ));
+    discard(cmd_quiet("rustup", &[
+        "toolchain",
+        "install",
+        "nightly",
+        "--component",
+        "rustfmt",
+        "--profile",
+        "minimal",
+    ]));
     return nightly_rustfmt();
 }
 
@@ -332,12 +329,12 @@ fn main() -> ExitCode {
         Some(Sub::Version) => {
             emit(pkg_version());
             return ExitCode::SUCCESS;
-        }
+        },
         Some(Sub::Rules) => {
             print_rules();
             return ExitCode::SUCCESS;
-        }
-        Some(Sub::Fix) => {}
+        },
+        Some(Sub::Fix) => {},
     }
     let result = run_fix();
     if result == ExitCode::SUCCESS {
@@ -683,17 +680,16 @@ fn run_fix() -> ExitCode {
     return result;
 }
 
-/// Formats rust and all other files.
+/// Formats rust and all other files, gating on a formatter that fails (e.g. a
+/// line rustfmt cannot fit under `max_width` when `error_on_line_overflow` is on).
 fn run_fmt_all() -> ExitCode {
-    if let Some(rustfmt) = require_nightly_rustfmt() {
-        discard(cmd_env(
-            "cargo",
-            &["fmt", "--all"],
-            &[("RUSTFMT", &rustfmt)],
-        ));
-    }
-    discard(run_dprint("fmt"));
-    return ExitCode::SUCCESS;
+    let Some(rustfmt) = require_nightly_rustfmt() else {
+        emit("nightly rustfmt unavailable; required for strict formatting");
+        return ExitCode::FAILURE;
+    };
+    let result_rust = cmd_env("cargo", &["fmt", "--all"], &[("RUSTFMT", &rustfmt)]);
+    let result_dprint = run_dprint("fmt");
+    return worst(result_rust, result_dprint);
 }
 
 /// Checks formatting of rust and all other files.
@@ -702,11 +698,9 @@ fn run_fmt_check() -> ExitCode {
         emit("nightly rustfmt unavailable; required for strict formatting");
         return ExitCode::FAILURE;
     };
-    let result_rust = cmd_env(
-        "cargo",
-        &["fmt", "--all", "--", "--check"],
-        &[("RUSTFMT", &rustfmt)],
-    );
+    let result_rust = cmd_env("cargo", &["fmt", "--all", "--", "--check"], &[(
+        "RUSTFMT", &rustfmt,
+    )]);
     let result_dprint = run_dprint("check");
     return worst(result_rust, result_dprint);
 }
@@ -968,17 +962,14 @@ fn run_seq(steps: &[fn() -> ExitCode]) -> ExitCode {
 
 /// Runs tests with nextest and doc tests.
 fn run_test() -> ExitCode {
-    let unit = cmd_quiet(
-        "cargo",
-        &[
-            "nextest",
-            "run",
-            "--all-features",
-            "--no-tests=pass",
-            "--status-level=none",
-            "--final-status-level=fail",
-        ],
-    );
+    let unit = cmd_quiet("cargo", &[
+        "nextest",
+        "run",
+        "--all-features",
+        "--no-tests=pass",
+        "--status-level=none",
+        "--final-status-level=fail",
+    ]);
     return worst(unit, run_doctests());
 }
 
@@ -1034,7 +1025,8 @@ fn print_rules() {
     ));
     discard(writeln!(
         out,
-        "gates: fmt(rustfmt+dprint), shell(shellcheck+shfmt), typos, no-comments, clippy, doc, test, cargo-deny, cargo-machete"
+        "gates: fmt(rustfmt+dprint), shell(shellcheck+shfmt), typos, no-comments, clippy, doc, \
+         test, cargo-deny, cargo-machete"
     ));
     discard(out.flush());
 }
