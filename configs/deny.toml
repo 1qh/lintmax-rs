@@ -30,9 +30,11 @@ ignore = false
 
 [bans]
 multiple-versions = "deny"
+multiple-versions-include-dev = true
 wildcards = "deny"
 highlight = "all"
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+required-git-spec = "rev"

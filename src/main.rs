@@ -96,6 +96,8 @@ const RUSTC_FORBID: &[&str] = &[
     "keyword_idents_2018",
     "keyword_idents_2024",
     "let_underscore_drop",
+    "linker_info",
+    "linker_messages",
     "macro_use_extern_crate",
     "meta_variable_misuse",
     "missing_copy_implementations",
@@ -861,7 +863,14 @@ fn run_shfmt(mode: &str) -> ExitCode {
     if files.is_empty() {
         return ExitCode::SUCCESS;
     }
-    let mut args: Vec<String> = vec!["-i=2".into(), mode.into()];
+    let mut args: Vec<String> = vec![
+        "-i=2".into(),
+        "-ci".into(),
+        "-sr".into(),
+        "-bn".into(),
+        "-s".into(),
+        mode.into(),
+    ];
     for path in &files {
         args.push(path.display().to_string());
     }
