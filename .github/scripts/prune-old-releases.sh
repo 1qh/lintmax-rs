@@ -9,16 +9,16 @@ set -euo pipefail
 mine="${GITHUB_REF_NAME:?tag required}"
 this_repo="${GITHUB_REPOSITORY:?}"
 
-all_tags() { gh api "repos/${1}/git/refs/tags" --jq '.[].ref' 2>/dev/null | sed 's#refs/tags/##'; }
+all_tags() { gh api "repos/${1}/git/refs/tags" --jq '.[].ref' 2> /dev/null | sed 's#refs/tags/##'; }
 
 older_than() {
   local candidate="${1}" keeper="${2}" newest
-  if [[ "${candidate}" == "${keeper}" ]]; then
+  if [[ ${candidate} == "${keeper}" ]]; then
     echo no
     return
   fi
   newest=$(printf '%s\n%s\n' "${candidate}" "${keeper}" | sort -V | tail -1)
-  if [[ "${newest}" == "${keeper}" ]]; then
+  if [[ ${newest} == "${keeper}" ]]; then
     echo yes
   else
     echo no
@@ -34,24 +34,24 @@ candidates=$(
 keep=$(printf '%s\n' "${candidates}" | tail -1)
 echo "keeper = ${keep}"
 
-releases=$(gh release list --repo "${this_repo}" --limit 200 --json tagName --jq '.[].tagName' 2>/dev/null) || releases=""
+releases=$(gh release list --repo "${this_repo}" --limit 200 --json tagName --jq '.[].tagName' 2> /dev/null) || releases=""
 for t in ${releases}; do
-  [[ -z "${t}" ]] && continue
+  [[ -z ${t} ]] && continue
   verdict=$(older_than "${t}" "${keep}")
-  [[ "${verdict}" == yes ]] || continue
-  gh release delete "${t}" --repo "${this_repo}" --yes --cleanup-tag 2>/dev/null &&
-    echo "deleted release+tag ${t}" || true
+  [[ ${verdict} == yes ]] || continue
+  gh release delete "${t}" --repo "${this_repo}" --yes --cleanup-tag 2> /dev/null \
+    && echo "deleted release+tag ${t}" || true
   sleep 1
 done
 
-all_tags "${this_repo}" >/tmp/dangling_tags.txt
+all_tags "${this_repo}" > /tmp/dangling_tags.txt
 tags=$(cat /tmp/dangling_tags.txt)
 for t in ${tags}; do
-  [[ -z "${t}" ]] && continue
+  [[ -z ${t} ]] && continue
   verdict=$(older_than "${t}" "${keep}")
-  [[ "${verdict}" == yes ]] || continue
-  gh api -X DELETE "repos/${this_repo}/git/refs/tags/${t}" 2>/dev/null &&
-    echo "deleted dangling tag ${t}" || true
+  [[ ${verdict} == yes ]] || continue
+  gh api -X DELETE "repos/${this_repo}/git/refs/tags/${t}" 2> /dev/null \
+    && echo "deleted dangling tag ${t}" || true
   sleep 1
 done
 
