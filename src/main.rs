@@ -291,21 +291,13 @@ fn is_lintmax_content(path: &Path, expected: &str) -> bool {
     return fs::read_to_string(path).map_or(true, |content| return content == expected);
 }
 
-/// Builds the rustfmt config augmented with an `ignore` list for vendored crates
-/// so the formatter skips them exactly as the lint stages do.
+/// The rustfmt config written for the project; the base config verbatim.
+///
+/// Vendored crates are excluded by formatting workspace members explicitly
+/// (`cargo fmt -p`), not by a rustfmt `ignore` block — an appended block also
+/// makes the written `rustfmt.toml` itself dprint-dirty under a strict config.
 fn rustfmt_with_ignores() -> String {
-    let dirs: Vec<String> = vendored_excludes()
-        .iter()
-        .map(|glob| return glob.strip_suffix("/**").unwrap_or(glob).to_owned())
-        .collect();
-    if dirs.is_empty() {
-        return RUSTFMT_TOML.to_owned();
-    }
-    let entries: String = dirs
-        .iter()
-        .map(|dir| return format!("  \"{dir}\",\n"))
-        .collect();
-    return format!("{RUSTFMT_TOML}{RUSTFMT_IGNORE_MARKER}ignore = [\n{entries}]\n");
+    return RUSTFMT_TOML.to_owned();
 }
 
 /// Whether the file is the embedded rustfmt.toml, optionally carrying the
@@ -689,9 +681,60 @@ fn run_fmt_all() -> ExitCode {
         emit("nightly rustfmt unavailable; required for strict formatting");
         return ExitCode::FAILURE;
     };
-    let result_rust = cmd_env("cargo", &["fmt", "--all"], &[("RUSTFMT", &rustfmt)]);
+    let result_rust = run_fmt_members(&rustfmt, &[]);
     let result_dprint = run_dprint("fmt");
     return worst(result_rust, result_dprint);
+}
+
+/// Names of the workspace-member packages, for formatting them explicitly.
+fn workspace_member_names() -> Vec<String> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .output();
+    let Ok(out) = output else {
+        return Vec::new();
+    };
+    let Ok(meta) = serde_json::from_slice::<Value>(&out.stdout) else {
+        return Vec::new();
+    };
+    let members = workspace_member_ids(&meta);
+    let packages = meta.get("packages").and_then(Value::as_array);
+    let mut names = Vec::new();
+    for pkg in packages.into_iter().flatten() {
+        let is_member = pkg
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| return members.contains(id));
+        if is_member && let Some(name) = pkg.get("name").and_then(Value::as_str) {
+            names.push(name.to_owned());
+        }
+    }
+    return names;
+}
+
+/// Runs cargo fmt over each workspace member explicitly, never `--all`.
+///
+/// `--all` also walks excluded vendored path-deps, and the rustfmt `ignore` glob
+/// that would re-exclude them is honored inconsistently across rustfmt versions.
+fn run_fmt_members(rustfmt: &str, extra: &[&str]) -> ExitCode {
+    let names = workspace_member_names();
+    let mut args: Vec<String> = vec!["fmt".to_owned()];
+    if names.is_empty() {
+        args.push("--all".to_owned());
+    } else {
+        for name in &names {
+            args.push("-p".to_owned());
+            args.push(name.clone());
+        }
+    }
+    if !extra.is_empty() {
+        args.push("--".to_owned());
+        for entry in extra {
+            args.push((*entry).to_owned());
+        }
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    return cmd_env("cargo", &refs, &[("RUSTFMT", rustfmt)]);
 }
 
 /// Checks formatting of rust and all other files.
@@ -700,9 +743,7 @@ fn run_fmt_check() -> ExitCode {
         emit("nightly rustfmt unavailable; required for strict formatting");
         return ExitCode::FAILURE;
     };
-    let result_rust = cmd_env("cargo", &["fmt", "--all", "--", "--check"], &[(
-        "RUSTFMT", &rustfmt,
-    )]);
+    let result_rust = run_fmt_members(&rustfmt, &["--check"]);
     let result_dprint = run_dprint("check");
     return worst(result_rust, result_dprint);
 }
@@ -960,9 +1001,13 @@ fn run_remove_comments() -> ExitCode {
 
 /// Runs steps sequentially, stopping on first failure.
 fn run_seq(steps: &[fn() -> ExitCode]) -> ExitCode {
-    for step in steps {
+    for (index, step) in steps.iter().enumerate() {
         let code = step();
         if code != ExitCode::SUCCESS {
+            discard(writeln!(
+                io::stderr(),
+                "lintmax: gate stage #{index} failed"
+            ));
             return code;
         }
     }
