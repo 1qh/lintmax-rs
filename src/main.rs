@@ -264,6 +264,32 @@ fn nightly_rustfmt() -> Option<String> {
     return Some(trimmed.to_owned());
 }
 
+/// Ensures the active toolchain carries one rustup component.
+///
+/// A `--profile minimal` toolchain (the common CI install) omits `rustfmt` and
+/// `clippy`, so their `cargo` subcommand wrappers (`cargo-fmt` / `cargo-clippy`)
+/// are absent and the stage dies with "not installed for the toolchain". This adds
+/// the component when its probe fails. Idempotent.
+fn ensure_active_component(probe: &[&str], component: &str) {
+    let present = Command::new("cargo")
+        .args(probe)
+        .output()
+        .is_ok_and(|out| return out.status.success());
+    if present {
+        return;
+    }
+    discard(cmd_quiet("rustup", &["component", "add", component]));
+}
+
+/// Ensures every active-toolchain component a gate stage shells out to is present.
+///
+/// `rustfmt` (the fmt stage) and `clippy` (the lint stage). The `RUSTFMT` env still
+/// forces the strict nightly rustfmt binary — these only provide the wrappers.
+fn ensure_active_components() {
+    ensure_active_component(&["fmt", "--version"], "rustfmt");
+    ensure_active_component(&["clippy", "--version"], "clippy");
+}
+
 /// Returns the nightly rustfmt path, installing the toolchain + component if absent.
 fn require_nightly_rustfmt() -> Option<String> {
     if let Some(path) = nightly_rustfmt() {
@@ -339,6 +365,7 @@ fn main() -> ExitCode {
 
 /// Runs all checks with temporary configs (no green-cache; used by CI paths).
 fn run_check_all() -> ExitCode {
+    ensure_active_components();
     write_configs();
     let result = run_seq(&[
         run_deny,
@@ -662,6 +689,7 @@ fn run_doc() -> ExitCode {
 
 /// Auto-fixes clippy, comments, typos, and formatting.
 fn run_fix() -> ExitCode {
+    ensure_active_components();
     write_configs();
     let result = run_seq(&[
         run_clippy_fix,
@@ -1126,6 +1154,7 @@ fn ensure_tools() {
         ("cargo-deny", "cargo-deny"),
         ("cargo-machete", "cargo-machete"),
         ("cargo-nextest", "cargo-nextest"),
+        ("dprint", "dprint"),
         ("typos", "typos-cli"),
     ] {
         ensure_tool(bin, krate);
