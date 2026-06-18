@@ -1097,7 +1097,7 @@ fn ensure_tool(bin: &str, krate: &str) {
         return;
     }
     if cmd_quiet("cargo", &["binstall", "--no-confirm", krate]) != ExitCode::SUCCESS {
-        discard(cmd_quiet("cargo", &["install", krate]));
+        discard(cmd_quiet("cargo", &["install", "--locked", krate]));
     }
 }
 
