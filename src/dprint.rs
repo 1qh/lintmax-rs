@@ -31,7 +31,17 @@ fn plugin_path(url: &str) -> Option<String> {
 /// Fetches the latest wasm URL for a plugin path via its `latest.json`.
 fn latest_url(path: &str) -> Option<String> {
     let endpoint = format!("{HOST}{path}/latest.json");
-    let Ok(output) = Command::new("curl").args(["-fsSL", &endpoint]).output() else {
+    let Ok(output) = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "15",
+            &endpoint,
+        ])
+        .output()
+    else {
         return None;
     };
     if !output.status.success() {
