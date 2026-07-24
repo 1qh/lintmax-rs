@@ -36,11 +36,7 @@ const RUSTFMT_IGNORE_MARKER: &str = "\n# lintmax: vendored crates excluded from 
 #[rustfmt::skip]
 const CLIPPY_ALLOW: &[&str] = &[
     "clippy::blanket_clippy_restriction_lints",
-    "clippy::exhaustive_enums",
-    "clippy::multiple_crate_versions",
-    "clippy::exhaustive_structs",
     "clippy::needless_return",
-    "clippy::pattern_type_mismatch",
     "clippy::pub_with_shorthand",
     "clippy::self_named_module_files",
     "clippy::semicolon_if_nothing_returned",
@@ -171,11 +167,11 @@ fn discard<T>(_value: T) {}
 /// Removes temporary config files lintmax owns: an exact embedded match, or a
 /// dprint.json that is the embedded default with only its plugin versions bumped.
 fn clean_configs() {
-    for (name, content) in MANAGED_CONFIGS {
+    for &(name, content) in MANAGED_CONFIGS {
         let path = config_path(name);
         let owned = is_lintmax_content(&path, content)
-            || (*name == "dprint.json" && is_bumped_dprint(&path, content))
-            || (*name == "rustfmt.toml" && is_lintmax_rustfmt(&path));
+            || (name == "dprint.json" && is_bumped_dprint(&path, content))
+            || (name == "rustfmt.toml" && is_lintmax_rustfmt(&path));
         if owned {
             discard(fs::remove_file(path));
         }
@@ -1139,7 +1135,7 @@ fn write_config(name: &str, content: &str) {
 /// the embedded version pins are only a bootstrap seed, never a stale lock.
 fn write_configs() {
     ensure_tools();
-    for (name, content) in MANAGED_CONFIGS {
+    for &(name, content) in MANAGED_CONFIGS {
         write_config(name, content);
     }
     bump_dprint_plugins();
@@ -1187,15 +1183,4 @@ fn bump_dprint_plugins() {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::normalize_dprint;
-
-    /// # Panics
-    /// On assertion failure.
-    #[test]
-    fn normalize_strips_plugin_version() {
-        let pinned = "\"https://plugins.dprint.dev/toml-0.7.0.wasm\",";
-        let other = "\"https://plugins.dprint.dev/toml-0.9.9.wasm\",";
-        assert_eq!(normalize_dprint(pinned), normalize_dprint(other));
-    }
-}
+mod tests;

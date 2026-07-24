@@ -27,6 +27,7 @@ const FILE_NAME: &str = "state.json";
 /// Persisted lintmax state: last green tree hash per working directory and the
 /// last staleness-check timestamp (unix seconds).
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct State {
     /// Unix seconds of the last staleness registry check.
     #[serde(default)]
@@ -40,7 +41,7 @@ impl State {
     /// Persists state to the cache file, best-effort (a write failure never
     /// fails the gate — the cache is an optimization, not a contract).
     #[inline]
-    pub fn save(&self) {
+    pub(crate) fn save(&self) {
         let Some(path) = state_path() else {
             return;
         };
@@ -185,20 +186,4 @@ pub fn tree_hash(version: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::fnv1a;
-
-    /// # Panics
-    /// On assertion failure.
-    #[test]
-    fn fnv1a_differs_on_change() {
-        assert_ne!(fnv1a(b"alpha"), fnv1a(b"alpha2"));
-    }
-
-    /// # Panics
-    /// On assertion failure.
-    #[test]
-    fn fnv1a_stable() {
-        assert_eq!(fnv1a(b"lintmax"), fnv1a(b"lintmax"));
-    }
-}
+mod tests;

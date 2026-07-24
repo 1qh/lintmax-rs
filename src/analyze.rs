@@ -17,6 +17,7 @@ const MIN_VALUE_LEN: usize = 3;
 
 /// A group of consts sharing one string value.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct DupConst {
     /// The const names bound to it.
     pub names: Vec<String>,
@@ -26,6 +27,7 @@ pub struct DupConst {
 
 /// A float division with no nearby zero/empty guard.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct FloatDiv {
     /// The denominator text.
     pub operand: String,
@@ -35,6 +37,7 @@ pub struct FloatDiv {
 
 /// A hash-gibberish identifier and the file it was found in.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Gibberish {
     /// File it appears in.
     pub file: String,
@@ -153,13 +156,14 @@ pub fn format_gibberish(issues: &[Gibberish]) -> String {
     if issues.is_empty() {
         return String::new();
     }
-    let names: Vec<&str> = issues
-        .iter()
-        .map(|issue| return issue.name.as_str())
-        .collect();
-    let mut out = String::from("hash-gibberish identifiers (rename to self-documenting names): ");
-    out.push_str(&names.join(", "));
-    out.push('\n');
+    let mut out = String::new();
+    for issue in issues {
+        out.push_str("  ");
+        out.push_str(&issue.file);
+        out.push_str(": ");
+        out.push_str(&issue.name);
+        out.push_str(" \u{2014} hash-gibberish identifier; rename to a self-documenting name\n");
+    }
     return out;
 }
 
@@ -353,43 +357,4 @@ fn sources() -> Vec<(String, String)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{is_guarded, looks_gibberish, parse_const, risky_float_div};
-
-    /// # Panics
-    /// On assertion failure.
-    #[test]
-    fn flags_unguarded_float_div() {
-        let line = "let mean = total as f64 / items.len() as f64;";
-        assert_eq!(risky_float_div(line), Some("items.len()".to_owned()));
-    }
-
-    /// # Panics
-    /// On assertion failure.
-    #[test]
-    fn gibberish_detects_hashy_name() {
-        assert!(looks_gibberish("a1B2c3D4e5"));
-        assert!(!looks_gibberish("tree_hash"));
-        assert!(!looks_gibberish("config"));
-    }
-
-    /// # Panics
-    /// On assertion failure.
-    #[test]
-    fn guarded_skips_protected_div() {
-        let line = "let mean = if n > 0 { total as f64 / n.len() as f64 } else { 0.0 };";
-        assert!(is_guarded(line));
-        assert_eq!(risky_float_div(line), None);
-    }
-
-    /// # Panics
-    /// On assertion failure.
-    #[test]
-    fn parses_string_const() {
-        let parsed = parse_const(r#"    const APP_DIR: &str = "lintmax-rs";"#);
-        assert_eq!(
-            parsed,
-            Some(("APP_DIR".to_owned(), "lintmax-rs".to_owned()))
-        );
-    }
-}
+mod tests;

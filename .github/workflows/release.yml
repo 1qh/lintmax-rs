@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: wipe workspace (leftover-file leakage between runs on shared runner)
         run: rm -rf "${GITHUB_WORKSPACE:?}/".[!.]* "${GITHUB_WORKSPACE:?}/"* 2>/dev/null || true
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
