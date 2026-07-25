@@ -66,7 +66,19 @@ const MANAGED_CONFIGS: &[(&str, &str)] = &[
 /// Rustc lints to deny.
 #[rustfmt::skip]
 const RUSTC_DENY: &[&str] = &[
+    "clippy::all",
+    "deprecated_safe",
+    "future_incompatible",
+    "keyword_idents",
+    "let_underscore",
+    "nonstandard_style",
+    "refining_impl_trait",
+    "rust_2018_compatibility",
     "rust_2018_idioms",
+    "rust_2021_compatibility",
+    "rust_2024_compatibility",
+    "unknown_or_malformed_diagnostic_attributes",
+    "unused",
     "unused_extern_crates",
     "unused_qualifications",
     "warnings",
@@ -679,7 +691,11 @@ fn run_doc() -> ExitCode {
             "--all-features",
             "--quiet",
         ],
-        &[("RUSTDOCFLAGS", "-D warnings")],
+        &[(
+            "RUSTDOCFLAGS",
+            "-D warnings -D rustdoc::missing_crate_level_docs -D rustdoc::private_doc_tests -D \
+             rustdoc::unescaped_backticks",
+        )],
     );
 }
 
