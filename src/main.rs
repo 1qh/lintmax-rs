@@ -378,6 +378,7 @@ fn run_check_all() -> ExitCode {
     let result = run_seq(&[
         run_deny,
         run_doc,
+        run_feature_matrix,
         run_fmt_check,
         run_lint,
         run_machete,
@@ -703,7 +704,7 @@ fn run_doc() -> ExitCode {
 fn run_fix() -> ExitCode {
     ensure_active_components();
     write_configs();
-    let result = run_seq(&[
+    let fixed = run_seq(&[
         run_clippy_fix,
         run_remove_comments,
         run_typos_fix,
@@ -711,7 +712,10 @@ fn run_fix() -> ExitCode {
         run_fmt_all,
     ]);
     clean_configs();
-    return result;
+    if fixed != ExitCode::SUCCESS {
+        return fixed;
+    }
+    return run_check_all();
 }
 
 /// Formats rust and all other files, gating on a formatter that fails (e.g. a
@@ -836,6 +840,28 @@ fn run_lint() -> ExitCode {
         "clippy".into(),
         "--all-targets".into(),
         "--all-features".into(),
+        "--quiet".into(),
+        "--".into(),
+    ];
+    args.extend(build_lint_args());
+
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    return cmd("cargo", &refs);
+}
+
+/// Lints every feature combination, not only the all-features one.
+///
+/// `--all-features` proves one combination compiles and lints; a crate can pass
+/// that and break on a subset, because a `cfg`-gated item is only missing when
+/// its feature is off. This costs nothing on a crate that declares no features
+/// and scales with the feature count on one that does.
+fn run_feature_matrix() -> ExitCode {
+    let mut args: Vec<String> = vec![
+        "hack".into(),
+        "clippy".into(),
+        "--each-feature".into(),
+        "--workspace".into(),
+        "--all-targets".into(),
         "--quiet".into(),
         "--".into(),
     ];
@@ -1164,6 +1190,7 @@ fn write_configs() {
 fn ensure_tools() {
     for &(bin, krate) in &[
         ("cargo-deny", "cargo-deny"),
+        ("cargo-hack", "cargo-hack"),
         ("cargo-machete", "cargo-machete"),
         ("cargo-nextest", "cargo-nextest"),
         ("dprint", "dprint"),
