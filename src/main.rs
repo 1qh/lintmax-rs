@@ -23,6 +23,9 @@ use serde_json::Value;
 const CLIPPY_TOML: &str = include_str!("../configs/clippy.toml");
 /// Embedded cargo-deny configuration.
 const DENY_TOML: &str = include_str!("../configs/deny.toml");
+
+/// File a project uses to declare advisories and duplicates it cannot fix.
+const EXCEPTIONS_FILE: &str = "lintmax-exceptions.toml";
 /// Embedded dprint configuration.
 const DPRINT_JSON: &str = include_str!("../configs/dprint.json");
 /// Embedded rustfmt configuration.
@@ -141,6 +144,23 @@ const RUSTC_FORBID: &[&str] = &[
     "unused_results",
     "variant_size_differences",
 ];
+
+/// Exceptions a project declares for advisories it cannot act on.
+///
+/// A dependency reached only through a third party pins what a project may use,
+/// so an advisory or duplicate it introduces is not something the project can
+/// fix by changing its own manifest. Naming each one keeps the check ON: the
+/// gate still fails the moment a DIFFERENT advisory or duplicate appears.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Exceptions {
+    /// Advisory identifiers to ignore, each with a reason in the project's ADR.
+    #[serde(default)]
+    advisories: Vec<String>,
+    /// `crate@version` entries whose duplication is forced by a dependency.
+    #[serde(default)]
+    duplicates: Vec<String>,
+}
 
 /// Cargo wrapper for subcommand dispatch.
 #[derive(Parser)]
@@ -1164,6 +1184,11 @@ fn write_config(name: &str, content: &str) {
     let path = config_path(name);
     let (final_content, owned) = if name == "rustfmt.toml" {
         (rustfmt_with_ignores(), is_lintmax_rustfmt(&path))
+    } else if name == "deny.toml" {
+        (
+            deny_with_exceptions(content),
+            is_lintmax_content(&path, content),
+        )
     } else {
         (content.to_owned(), is_lintmax_content(&path, content))
     };
@@ -1171,6 +1196,70 @@ fn write_config(name: &str, content: &str) {
         return;
     }
     discard(fs::write(&path, final_content));
+}
+
+/// Reads the project's declared exceptions, when it declares any.
+///
+/// A file that cannot be parsed is reported and then treated as absent, because
+/// silently ignoring it would widen the gate by exactly the entries the project
+/// believed it had declared.
+fn project_exceptions() -> Exceptions {
+    let path = Path::new(EXCEPTIONS_FILE);
+    let Ok(text) = fs::read_to_string(path) else {
+        return Exceptions::default();
+    };
+    return match toml::from_str::<Exceptions>(&text) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            advisory(
+                EXCEPTIONS_FILE,
+                &format!(" is not readable, ignoring it: {error}\n"),
+            );
+            Exceptions::default()
+        },
+    };
+}
+
+/// Folds the project's exceptions into the embedded cargo-deny configuration.
+///
+/// Each list is substituted INTO its owning section rather than appended to the
+/// file, because a bare append lands in whichever section happens to be last.
+fn deny_with_exceptions(content: &str) -> String {
+    return merge_exceptions(content, &project_exceptions());
+}
+
+/// Substitutes declared exceptions into the config's own sections.
+///
+/// Each list goes INTO its owning section rather than onto the end of the file,
+/// because a bare append lands in whichever section happens to be last.
+fn merge_exceptions(content: &str, declared: &Exceptions) -> String {
+    let with_advisories = substitute(content, "ignore = []", &declared.advisories, |body| {
+        return format!("ignore = [\n{body}\n]");
+    });
+    return substitute(
+        &with_advisories,
+        "multiple-versions = \"deny\"",
+        &declared.duplicates,
+        |body| return format!("multiple-versions = \"deny\"\nskip = [\n{body}\n]"),
+    );
+}
+
+/// Replaces `anchor` with `shape` applied to the quoted entries, when any.
+fn substitute(
+    content: &str,
+    anchor: &str,
+    entries: &[String],
+    shape: impl Fn(&str) -> String,
+) -> String {
+    if entries.is_empty() {
+        return content.to_owned();
+    }
+    let body = entries
+        .iter()
+        .map(|entry| return format!("  \"{entry}\","))
+        .collect::<Vec<String>>()
+        .join("\n");
+    return content.replace(anchor, &shape(&body));
 }
 
 /// Writes all temporary config files, then bumps dprint plugins to latest so

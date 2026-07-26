@@ -22,6 +22,11 @@ allow = [
   "Unicode-DFS-2016",
   "Zlib",
   "CDLA-Permissive-2.0",
+  "0BSD",
+  "CC0-1.0",
+  "MPL-2.0",
+  "NCSA",
+  "Unlicense",
 ]
 confidence-threshold = 0.93
 
