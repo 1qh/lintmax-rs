@@ -1,6 +1,6 @@
 [package]
 name = "cargo-lintmax"
-version = "0.0.13"
+version = "0.0.14"
 categories = ["development-tools"]
 edition = "2024"
 keywords = ["linting", "clippy", "strict", "pipeline"]
