@@ -10,8 +10,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  CARGO_HOME: ${{ github.workspace }}/.cargo-home
-  CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
+  CARGO_HOME: ${{ runner.temp }}/cargo-home
+  CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
 jobs:
   release:
     runs-on: ${{ vars.RUNNER_LABEL }}

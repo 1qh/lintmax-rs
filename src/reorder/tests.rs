@@ -186,3 +186,86 @@ fn a_lifetime_is_never_read_as_a_character_literal() {
         "a lifetime apostrophe keeps its braces countable while a literal loses its own"
     );
 }
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_member_whose_signature_spans_lines_still_sorts() {
+    let path =
+        fixture(
+            "wrapped-signature",
+            "impl Held {\n    /// Doc.\n    fn zulu(&self) -> usize {\n        return 0;\n    \
+             }\n\n    /// Doc.\n    const fn alpha<'held>(\n        &self,\n        value: &'held \
+             str,\n    ) -> &'held str {\n        return value;\n    }\n}\n",
+        );
+    assert!(
+        super::sort_members(&path),
+        "a signature wrapped across lines is still a member the sort can move"
+    );
+    let sorted = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        sorted.find("fn alpha") < sorted.find("fn zulu"),
+        "the wrapped member sorts above the one-line one"
+    );
+    drop(fs::remove_file(&path));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_block_holding_a_line_no_member_owns_is_left_alone() {
+    let path = fixture(
+        "untiled-block",
+        "impl Held {
+    /// Doc.
+    fn zulu(&self) -> usize {
+        return 0;
+    }
+    held_macro!(zulu);
+
+    /// Doc.
+    fn alpha(&self) -> usize {
+        return 1;
+    }
+}
+",
+    );
+    let before = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        !super::sort_members(&path),
+        "a block the members do not tile is never rewritten"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap_or_default(),
+        before,
+        "every byte survives, where the splice would have dropped the unowned line"
+    );
+    drop(fs::remove_file(&path));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn an_argument_comma_never_ends_a_member_early() {
+    let path =
+        fixture(
+            "wrapped-arguments",
+            "impl Held {\n    /// Doc.\n    fn zulu(\n        &self,\n        value: usize,\n    \
+             ) -> usize {\n        return value;\n    }\n\n    /// Doc.\n    fn alpha(&self) -> \
+             usize {\n        return 1;\n    }\n}\n",
+        );
+    assert!(
+        super::sort_members(&path),
+        "a member whose arguments wrap is one member, so the block still tiles"
+    );
+    let sorted = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        sorted.find("fn alpha") < sorted.find("fn zulu"),
+        "the wrapped member moves whole rather than splitting at its argument comma"
+    );
+    assert!(
+        sorted.contains("value: usize,"),
+        "its arguments travel with it"
+    );
+    drop(fs::remove_file(&path));
+}

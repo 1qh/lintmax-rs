@@ -8,6 +8,7 @@
 use core::ops::Range;
 use std::{
     fs,
+    io::{self, Write as _},
     path::{Path, PathBuf},
 };
 
@@ -323,6 +324,7 @@ fn sort_file(path: &Path) -> bool {
     };
     let rewritten = rebuilt.join("\n");
     if tokens(&rewritten) != tokens(&original) {
+        report_refusal(path, &original, &rewritten);
         return false;
     }
     return fs::write(path, rewritten).is_ok();
@@ -375,9 +377,11 @@ fn member_extent(lines: &[String], start: usize, close: usize) -> usize {
             break;
         };
         let code = code_only(line);
-        let opens = isize::try_from(code.matches('{').count()).unwrap_or(0);
-        let closes = isize::try_from(code.matches('}').count()).unwrap_or(0);
-        depth = depth.saturating_add(opens).saturating_sub(closes);
+        for (opener, closer) in [('{', '}'), ('[', ']'), ('(', ')')] {
+            let opens = isize::try_from(code.matches(opener).count()).unwrap_or(0);
+            let closes = isize::try_from(code.matches(closer).count()).unwrap_or(0);
+            depth = depth.saturating_add(opens).saturating_sub(closes);
+        }
         let trimmed = line.trim_end();
         if depth <= 0
             && (trimmed.ends_with('}') || trimmed.ends_with(';') || trimmed.ends_with(','))
@@ -441,6 +445,7 @@ fn sort_members(path: &Path) -> bool {
     }
     let rewritten = lines.join("\n");
     if tokens(&rewritten) != tokens(&original) {
+        report_refusal(path, &original, &rewritten);
         return false;
     }
     return fs::write(path, rewritten).is_ok();
@@ -481,22 +486,89 @@ fn sort_block(lines: &mut Vec<String>, open: usize, close: usize, named: &NameOf
     if order == sorted || order.len() < 2 {
         return false;
     }
-    let mut ranked: Vec<&Member> = found.iter().collect();
-    ranked.sort_by(|left, right| return left.name.cmp(&right.name));
-    let mut rebuilt: Vec<String> = Vec::new();
-    for member in ranked {
-        if let Some(span) = lines.get(member.start..=member.end) {
-            rebuilt.extend(span.iter().cloned());
-        }
-    }
     let Some(first) = found.first() else {
         return false;
     };
     let Some(last) = found.last() else {
         return false;
     };
+    if !tiles(lines, &found, first.start, last.end) {
+        return false;
+    }
+    let mut ranked: Vec<&Member> = found.iter().collect();
+    ranked.sort_by(|left, right| return left.name.cmp(&right.name));
+    let mut rebuilt: Vec<String> = Vec::new();
+    for member in ranked {
+        separate(&mut rebuilt);
+        if let Some(span) = lines.get(member.start..=member.end) {
+            rebuilt.extend(span.iter().cloned());
+        }
+    }
     drop(lines.splice(first.start..=last.end, rebuilt));
     return true;
+}
+
+/// Whether the members cover every line carrying code across their own span.
+///
+/// A line owned by no member is a line the sort would drop, so a block the
+/// members do not tile is left exactly as it stands rather than rewritten.
+fn tiles(lines: &[String], found: &[Member], first: usize, last: usize) -> bool {
+    let mut index = first;
+    while index <= last {
+        let owned = found
+            .iter()
+            .any(|member| return member.start <= index && index <= member.end);
+        let blank = lines
+            .get(index)
+            .is_some_and(|line| return line.trim().is_empty());
+        if !owned && !blank {
+            return false;
+        }
+        index = index.saturating_add(1);
+    }
+    return true;
+}
+
+/// Opens a blank line between two members a rewrite places back to back.
+fn separate(rebuilt: &mut Vec<String>) {
+    if rebuilt.is_empty() {
+        return;
+    }
+    rebuilt.push(String::new());
+}
+
+/// Reports a refusal, naming the file and what the rewrite would have lost.
+fn report_refusal(path: &Path, original: &str, rewritten: &str) {
+    drop(writeln!(
+        io::stderr(),
+        "lintmax: refused to reorder {} ({})",
+        path.display(),
+        token_difference(original, rewritten)
+    ));
+}
+
+/// The first tokens a rewrite would lose or gain, for a refusal to name.
+fn token_difference(original: &str, rewritten: &str) -> String {
+    let before = tokens(original);
+    let after = tokens(rewritten);
+    let lost: Vec<&String> = before
+        .iter()
+        .filter(|token| return !after.contains(token))
+        .take(4)
+        .collect();
+    let gained: Vec<&String> = after
+        .iter()
+        .filter(|token| return !before.contains(token))
+        .take(4)
+        .collect();
+    if lost.is_empty() && gained.is_empty() {
+        return format!(
+            "the counts differ: {} against {}",
+            before.len(),
+            after.len()
+        );
+    }
+    return format!("would lose {lost:?} and gain {gained:?}");
 }
 
 /// The identifiers and numbers a source carries, sorted, punctuation excluded.
