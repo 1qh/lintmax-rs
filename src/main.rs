@@ -40,6 +40,7 @@ const RUSTFMT_IGNORE_MARKER: &str = "\n# lintmax: vendored crates excluded from 
 #[rustfmt::skip]
 const CLIPPY_ALLOW: &[&str] = &[
     "clippy::blanket_clippy_restriction_lints",
+    "clippy::float_arithmetic",
     "clippy::multiple_crate_versions",
     "clippy::needless_return",
     "clippy::pub_with_shorthand",
