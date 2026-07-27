@@ -44,6 +44,7 @@ const CLIPPY_ALLOW: &[&str] = &[
     "clippy::needless_return",
     "clippy::pub_with_shorthand",
     "clippy::redundant_pub_crate",
+    "clippy::ref_patterns",
     "clippy::self_named_module_files",
     "clippy::semicolon_if_nothing_returned",
     "clippy::semicolon_outside_block",
