@@ -4,13 +4,15 @@ on: [push, pull_request]
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  CARGO_HOME: ${{ runner.temp }}/cargo-home
-  CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
 
 jobs:
   ci:
     runs-on: ${{ vars.RUNNER_LABEL }}
     steps:
+      - name: own this run's cargo dirs (a shared home lets one run delete another's binaries)
+        run: |
+          echo "CARGO_HOME=${RUNNER_TEMP}/cargo-home" >> "${GITHUB_ENV}"
+          echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/cargo-target" >> "${GITHUB_ENV}"
       - name: wipe workspace (leftover-file leakage between runs on shared runner)
         run: rm -rf "${GITHUB_WORKSPACE:?}/".[!.]* "${GITHUB_WORKSPACE:?}/"* 2>/dev/null || true
       - uses: actions/checkout@v7
