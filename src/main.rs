@@ -43,6 +43,7 @@ const CLIPPY_ALLOW: &[&str] = &[
     "clippy::multiple_crate_versions",
     "clippy::needless_return",
     "clippy::pub_with_shorthand",
+    "clippy::redundant_pub_crate",
     "clippy::self_named_module_files",
     "clippy::semicolon_if_nothing_returned",
     "clippy::semicolon_outside_block",
@@ -204,6 +205,7 @@ fn clean_configs() {
     for &(name, content) in MANAGED_CONFIGS {
         let path = config_path(name);
         let owned = is_lintmax_content(&path, content)
+            || (name == "deny.toml" && is_lintmax_content(&path, &deny_with_exceptions(content)))
             || (name == "dprint.json" && is_bumped_dprint(&path, content))
             || (name == "rustfmt.toml" && is_lintmax_rustfmt(&path));
         if owned {
@@ -1187,10 +1189,9 @@ fn write_config(name: &str, content: &str) {
     let (final_content, owned) = if name == "rustfmt.toml" {
         (rustfmt_with_ignores(), is_lintmax_rustfmt(&path))
     } else if name == "deny.toml" {
-        (
-            deny_with_exceptions(content),
-            is_lintmax_content(&path, content),
-        )
+        let merged = deny_with_exceptions(content);
+        let owned = is_lintmax_content(&path, &merged);
+        (merged, owned)
     } else {
         (content.to_owned(), is_lintmax_content(&path, content))
     };
@@ -1292,17 +1293,38 @@ fn ensure_tools() {
 }
 
 /// Installs one cargo tool when its binary is absent.
+///
+/// The install is FORCED, because cargo tracks an installed package in its own
+/// registry and skips a reinstall on that record alone — so a binary removed
+/// from the bin directory is never restored by a plain install, and the stage
+/// that shells out to it dies naming a command cargo believes it has.
+///
+/// A tool still absent after the attempt is reported rather than swallowed: the
+/// stage would otherwise fail with an unexplained missing command, which reads
+/// as a broken toolchain rather than as an install that did not happen.
 fn ensure_tool(bin: &str, krate: &str) {
-    let present = Command::new(bin)
+    if installed(bin) {
+        return;
+    }
+    if cmd_quiet("cargo", &["binstall", "--no-confirm", "--force", krate]) != ExitCode::SUCCESS {
+        discard(cmd_quiet("cargo", &[
+            "install", "--locked", "--force", krate,
+        ]));
+    }
+    if !installed(bin) {
+        discard(writeln!(
+            io::stderr(),
+            "lintmax: could not install {krate}, so {bin} is unavailable"
+        ));
+    }
+}
+
+/// Whether a child tool's binary answers on the current path.
+fn installed(bin: &str) -> bool {
+    return Command::new(bin)
         .arg("--version")
         .output()
         .is_ok_and(|out| return out.status.success());
-    if present {
-        return;
-    }
-    if cmd_quiet("cargo", &["binstall", "--no-confirm", krate]) != ExitCode::SUCCESS {
-        discard(cmd_quiet("cargo", &["install", "--locked", krate]));
-    }
 }
 
 /// Rewrites the written dprint config's plugin URLs to latest so the embedded
