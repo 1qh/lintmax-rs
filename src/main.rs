@@ -35,10 +35,12 @@ const TYPOS_TOML: &str = include_str!("../configs/typos.toml");
 /// Marker delimiting the computed vendored-ignore block appended to rustfmt.toml.
 const RUSTFMT_IGNORE_MARKER: &str = "\n# lintmax: vendored crates excluded from formatting\n";
 
-/// Clippy lints to allow (contradicting pairs and impractical restrictions).
+/// Clippy lints to allow (contradicting pairs, impractical restrictions, and
+/// duplicates of a sibling stage that gates the same class more precisely).
 #[rustfmt::skip]
 const CLIPPY_ALLOW: &[&str] = &[
     "clippy::blanket_clippy_restriction_lints",
+    "clippy::multiple_crate_versions",
     "clippy::needless_return",
     "clippy::pub_with_shorthand",
     "clippy::self_named_module_files",
