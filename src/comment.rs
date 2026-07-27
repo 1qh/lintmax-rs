@@ -70,6 +70,27 @@ impl Cursor {
     }
 }
 
+/// Other literal mode for a closing quote (`"` → `Str`, else `Char`).
+const fn quoted_mode(close: char) -> Scan {
+    if close == '"' {
+        return Scan::Str;
+    }
+    return Scan::Char;
+}
+
+/// Consumes one char inside a `"..."` or `'.'` literal, returning the next mode.
+const fn step_quoted(cursor: &mut Cursor, cur: char, close: char) -> Scan {
+    if cur == '\\' {
+        cursor.step_escape();
+        return quoted_mode(close);
+    }
+    cursor.step();
+    if cur == close {
+        return Scan::Code;
+    }
+    return quoted_mode(close);
+}
+
 /// Whether the cursor sits on a raw-string terminator for `hashes` hashes.
 fn closes_raw(cursor: &Cursor, hashes: usize) -> bool {
     for offset in 1..=hashes {
@@ -78,14 +99,6 @@ fn closes_raw(cursor: &Cursor, hashes: usize) -> bool {
         }
     }
     return true;
-}
-
-/// Other literal mode for a closing quote (`"` → `Str`, else `Char`).
-const fn quoted_mode(close: char) -> Scan {
-    if close == '"' {
-        return Scan::Str;
-    }
-    return Scan::Char;
 }
 
 /// Whether the char at the cursor opens a char literal (`'x'`, `'\n'`) rather
@@ -135,19 +148,6 @@ fn step_code(cursor: &mut Cursor, cur: char) -> Step {
         return Step::Next(Scan::Char);
     }
     return Step::Next(Scan::Code);
-}
-
-/// Consumes one char inside a `"..."` or `'.'` literal, returning the next mode.
-const fn step_quoted(cursor: &mut Cursor, cur: char, close: char) -> Scan {
-    if cur == '\\' {
-        cursor.step_escape();
-        return quoted_mode(close);
-    }
-    cursor.step();
-    if cur == close {
-        return Scan::Code;
-    }
-    return quoted_mode(close);
 }
 
 /// Consumes one char inside a raw string, returning the next mode.

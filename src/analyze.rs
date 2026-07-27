@@ -45,6 +45,11 @@ pub struct Gibberish {
     pub name: String,
 }
 
+/// Whether a char can appear inside a rust identifier.
+const fn is_ident_char(ch: char) -> bool {
+    return ch == '_' || ch.is_ascii_alphanumeric();
+}
+
 /// Extracts the binding name after a `let `/`fn `/`const ` keyword on a line.
 fn binding_name(line: &str, keyword: &str) -> Option<String> {
     let Some(after_kw) = line.trim_start().strip_prefix(keyword) else {
@@ -223,11 +228,6 @@ fn in_string_literal(prefix: &str) -> bool {
         }
     }
     return open;
-}
-
-/// Whether a char can appear inside a rust identifier.
-const fn is_ident_char(ch: char) -> bool {
-    return ch == '_' || ch.is_ascii_alphanumeric();
 }
 
 /// Whether a line carries an inline zero/empty guard for its denominator.

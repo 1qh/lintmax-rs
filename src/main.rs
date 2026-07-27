@@ -5,6 +5,7 @@ extern crate alloc;
 pub mod analyze;
 pub mod comment;
 pub mod dprint;
+pub mod reorder;
 pub mod staleness;
 pub mod state;
 
@@ -196,6 +197,11 @@ enum Sub {
     Rules,
     /// Print the version.
     Version,
+}
+
+/// Cargo package version, baked in at compile time.
+const fn pkg_version() -> &'static str {
+    return env!("CARGO_PKG_VERSION");
 }
 
 /// Discards a result, satisfying must-use and drop lints.
@@ -417,11 +423,6 @@ fn run_check_all() -> ExitCode {
     run_advisories();
     clean_configs();
     return result;
-}
-
-/// Cargo package version, baked in at compile time.
-const fn pkg_version() -> &'static str {
-    return env!("CARGO_PKG_VERSION");
 }
 
 /// Whether the gate runs under CI (where the green-cache is bypassed so a fresh
@@ -732,6 +733,7 @@ fn run_fix() -> ExitCode {
     write_configs();
     let fixed = run_seq(&[
         run_clippy_fix,
+        run_reorder_items,
         run_remove_comments,
         run_typos_fix,
         run_shfmt_fix,
@@ -742,6 +744,15 @@ fn run_fix() -> ExitCode {
         return fixed;
     }
     return run_check_all();
+}
+
+/// Sorts every module's items into the groups the ordering lint declares.
+///
+/// The rewrite refuses itself whenever a file's token multiset would change, so
+/// a misparse leaves the file untouched rather than losing a declaration.
+fn run_reorder_items() -> ExitCode {
+    reorder::sort_tree(Path::new("."));
+    return ExitCode::SUCCESS;
 }
 
 /// Formats rust and all other files, gating on a formatter that fails (e.g. a
