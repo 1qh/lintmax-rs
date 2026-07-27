@@ -1294,10 +1294,11 @@ fn ensure_tools() {
 
 /// Installs one cargo tool when its binary is absent.
 ///
-/// The install is FORCED, because cargo tracks an installed package in its own
-/// registry and skips a reinstall on that record alone — so a binary removed
-/// from the bin directory is never restored by a plain install, and the stage
-/// that shells out to it dies naming a command cargo believes it has.
+/// A FORCED install first REMOVES the existing binary, so forcing one that is
+/// merely believed absent destroys a working tool the moment the install fails —
+/// the force is therefore reserved for a binary that is genuinely not on disk,
+/// where cargo would otherwise skip the reinstall on its own registry record and
+/// never restore it.
 ///
 /// A tool still absent after the attempt is reported rather than swallowed: the
 /// stage would otherwise fail with an unexplained missing command, which reads
@@ -1306,10 +1307,15 @@ fn ensure_tool(bin: &str, krate: &str) {
     if installed(bin) {
         return;
     }
-    if cmd_quiet("cargo", &["binstall", "--no-confirm", "--force", krate]) != ExitCode::SUCCESS {
-        discard(cmd_quiet("cargo", &[
-            "install", "--locked", "--force", krate,
-        ]));
+    let force: &[&str] = if on_path(bin) { &[] } else { &["--force"] };
+    let mut binstall = vec!["binstall", "--no-confirm"];
+    binstall.extend_from_slice(force);
+    binstall.push(krate);
+    if cmd_quiet("cargo", &binstall) != ExitCode::SUCCESS {
+        let mut install = vec!["install", "--locked"];
+        install.extend_from_slice(force);
+        install.push(krate);
+        discard(cmd_quiet("cargo", &install));
     }
     if !installed(bin) {
         discard(writeln!(
@@ -1321,10 +1327,32 @@ fn ensure_tool(bin: &str, krate: &str) {
 
 /// Whether a child tool's binary answers on the current path.
 fn installed(bin: &str) -> bool {
+    if let Some(sub) = bin.strip_prefix("cargo-") {
+        return Command::new("cargo")
+            .args([sub, "--version"])
+            .output()
+            .is_ok_and(|out| return out.status.success());
+    }
     return Command::new(bin)
         .arg("--version")
         .output()
         .is_ok_and(|out| return out.status.success());
+}
+
+/// Whether a binary of that name sits on the current path.
+///
+/// A cargo subcommand is invoked THROUGH cargo, so its own file is what says
+/// whether an install would be replacing something rather than creating it.
+fn on_path(bin: &str) -> bool {
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    for dir in env::split_paths(&path) {
+        if dir.join(bin).is_file() {
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Rewrites the written dprint config's plugin URLs to latest so the embedded
