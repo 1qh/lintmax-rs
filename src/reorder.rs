@@ -40,12 +40,123 @@ struct Item {
     start: usize,
 }
 
-/// Sorts every rust file under a root.
+/// Reads the name a declaration carries, when its line opens one.
+type NameOf = dyn Fn(&str) -> Option<String>;
+
+/// One member of a block, with the lines it spans and the name it sorts by.
+struct Member {
+    /// Last line index the member spans.
+    end: usize,
+    /// Name the member sorts by, or `None` for a trailing run that holds.
+    name: Option<String>,
+    /// First line index the member spans, docs and attributes included.
+    start: usize,
+}
+
+/// Whether the quote at `at` opens a character literal rather than a lifetime.
+fn opens_char_literal(chars: &[char], at: usize) -> bool {
+    let escaped = chars.get(at.saturating_add(1)) == Some(&'\\');
+    let span = if escaped { 5_usize } else { 3_usize };
+    let mut ahead = at.saturating_add(2);
+    while ahead < at.saturating_add(span) {
+        if chars.get(ahead) == Some(&'\'') {
+            return true;
+        }
+        ahead = ahead.saturating_add(1);
+    }
+    return false;
+}
+
+/// The line with its string literals, character literals and comment removed.
+fn code_only(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut kept = String::new();
+    let mut index = 0_usize;
+    while index < chars.len() {
+        let Some(&character) = chars.get(index) else {
+            break;
+        };
+        if character == '/' && chars.get(index.saturating_add(1)) == Some(&'/') {
+            break;
+        }
+        if character == '"' || (character == '\'' && opens_char_literal(&chars, index)) {
+            index = literal_end(&chars, index, character);
+            continue;
+        }
+        kept.push(character);
+        index = index.saturating_add(1);
+    }
+    return kept;
+}
+
+/// The index just past the literal opened at `at` by `quote`.
+fn literal_end(chars: &[char], at: usize, quote: char) -> usize {
+    let mut index = at.saturating_add(1);
+    while index < chars.len() {
+        match chars.get(index) {
+            Some(&'\\') => index = index.saturating_add(2),
+            Some(&found) if found == quote => return index.saturating_add(1),
+            _ => index = index.saturating_add(1),
+        }
+    }
+    return chars.len();
+}
+
+/// Sorts every rust file under a root: module items, then members.
 #[inline]
 pub fn sort_tree(root: &Path) {
     for path in rust_files(root) {
         let _sorted = sort_file(&path);
+        let _members = sort_members(&path);
     }
+}
+
+/// The name a member declaration carries, when the line opens one.
+fn member_name(line: &str) -> Option<String> {
+    let bare = line.trim_start();
+    let stripped = bare
+        .split_once("pub(crate) ")
+        .map_or(bare, |rest| return rest.1)
+        .trim_start_matches("pub ");
+    for keyword in [
+        "fn ",
+        "const fn ",
+        "async fn ",
+        "unsafe fn ",
+        "const ",
+        "type ",
+    ] {
+        let named = stripped.strip_prefix(keyword).map(leading_identifier);
+        if let Some(found) = named.filter(|taken| return !taken.is_empty()) {
+            return Some(found);
+        }
+    }
+    return None;
+}
+
+/// The identifier a fragment opens with, which may be empty.
+fn leading_identifier(fragment: &str) -> String {
+    return fragment
+        .chars()
+        .take_while(|character| return character.is_alphanumeric() || *character == '_')
+        .collect();
+}
+
+/// The name a struct field or enum variant carries, when the line declares one.
+fn field_name(line: &str) -> Option<String> {
+    let bare = line.trim_start();
+    if bare.starts_with("//") || bare.starts_with('#') || bare.is_empty() {
+        return None;
+    }
+    let stripped = bare
+        .split_once("pub(crate) ")
+        .map_or(bare, |rest| return rest.1)
+        .trim_start_matches("pub ");
+    let named = leading_identifier(stripped);
+    if named.is_empty() {
+        return None;
+    }
+    return Some(named);
 }
 
 /// Whether a line opens a top-level item, and which group it sorts into.
@@ -117,11 +228,12 @@ fn extent(lines: &[String], start: usize) -> usize {
         let Some(line) = lines.get(index) else {
             break;
         };
+        let code = code_only(line);
         for (open, close) in [('{', '}'), ('[', ']'), ('(', ')')] {
-            let opens = isize::try_from(line.matches(open).count()).unwrap_or(0);
-            let closes = isize::try_from(line.matches(close).count()).unwrap_or(0);
+            let opens = isize::try_from(code.matches(open).count()).unwrap_or(0);
+            let closes = isize::try_from(code.matches(close).count()).unwrap_or(0);
             depth = depth.saturating_add(opens).saturating_sub(closes);
-            opened = opened || line.contains(open);
+            opened = opened || code.contains(open);
         }
         if depth <= 0 && (line.trim_end().ends_with(';') || opened) {
             return index;
@@ -214,6 +326,177 @@ fn sort_file(path: &Path) -> bool {
         return false;
     }
     return fs::write(path, rewritten).is_ok();
+}
+
+/// The members a block declares between `open` and `close`.
+fn members(lines: &[String], open: usize, close: usize, named: &NameOf) -> Vec<Member> {
+    let mut found: Vec<Member> = Vec::new();
+    let mut header: Option<usize> = None;
+    let mut index = open.saturating_add(1);
+    while index < close {
+        let Some(line) = lines.get(index) else {
+            break;
+        };
+        let trimmed = line.trim_start();
+        let is_header = trimmed.starts_with("///") || trimmed.starts_with("#[");
+        if is_header {
+            header = header.or(Some(index));
+            index = index.saturating_add(1);
+            continue;
+        }
+        if trimmed.is_empty() {
+            index = index.saturating_add(1);
+            continue;
+        }
+        let Some(name) = named(line) else {
+            header = None;
+            index = index.saturating_add(1);
+            continue;
+        };
+        let start = header.unwrap_or(index);
+        let end = member_extent(lines, index, close);
+        found.push(Member {
+            end,
+            name: Some(name),
+            start,
+        });
+        header = None;
+        index = end.saturating_add(1);
+    }
+    return found;
+}
+
+/// The last line of the member opening at `start`, bounded by its block.
+fn member_extent(lines: &[String], start: usize, close: usize) -> usize {
+    let mut depth = 0_isize;
+    let mut index = start;
+    while index < close {
+        let Some(line) = lines.get(index) else {
+            break;
+        };
+        let code = code_only(line);
+        let opens = isize::try_from(code.matches('{').count()).unwrap_or(0);
+        let closes = isize::try_from(code.matches('}').count()).unwrap_or(0);
+        depth = depth.saturating_add(opens).saturating_sub(closes);
+        let trimmed = line.trim_end();
+        if depth <= 0
+            && (trimmed.ends_with('}') || trimmed.ends_with(';') || trimmed.ends_with(','))
+        {
+            return index;
+        }
+        index = index.saturating_add(1);
+    }
+    return close.saturating_sub(1);
+}
+
+/// The line closing the block opened at `open`.
+fn block_close(lines: &[String], open: usize) -> usize {
+    let mut depth = 0_isize;
+    let mut index = open;
+    while index < lines.len() {
+        let Some(line) = lines.get(index) else {
+            break;
+        };
+        let code = code_only(line);
+        let opens = isize::try_from(code.matches('{').count()).unwrap_or(0);
+        let closes = isize::try_from(code.matches('}').count()).unwrap_or(0);
+        depth = depth.saturating_add(opens).saturating_sub(closes);
+        if depth <= 0 && index > open {
+            return index;
+        }
+        index = index.saturating_add(1);
+    }
+    return lines.len().saturating_sub(1);
+}
+
+/// Sorts every block's members in a file's lines, reporting whether any moved.
+fn sorted_blocks(lines: &mut Vec<String>) -> bool {
+    let mut changed = false;
+    let mut index = 0_usize;
+    while index < lines.len() {
+        let Some(line) = lines.get(index) else {
+            break;
+        };
+        let Some(named) = reader_for(line) else {
+            index = index.saturating_add(1);
+            continue;
+        };
+        let close = block_close(lines, index);
+        if sort_block(lines, index, close, named) {
+            changed = true;
+        }
+        index = close.saturating_add(1);
+    }
+    return changed;
+}
+
+/// Sorts the members of every impl block and every type in one file.
+fn sort_members(path: &Path) -> bool {
+    let Ok(original) = fs::read_to_string(path) else {
+        return false;
+    };
+    let mut lines: Vec<String> = original.split('\n').map(str::to_owned).collect();
+    if !sorted_blocks(&mut lines) {
+        return false;
+    }
+    let rewritten = lines.join("\n");
+    if tokens(&rewritten) != tokens(&original) {
+        return false;
+    }
+    return fs::write(path, rewritten).is_ok();
+}
+
+/// The name reader a block's opening line calls for, if it opens one at all.
+fn reader_for(line: &'_ str) -> Option<&'static NameOf> {
+    if !line.trim_end().ends_with('{') {
+        return None;
+    }
+    if line.starts_with("impl ") || line.starts_with("impl<") {
+        return Some(&member_name);
+    }
+    if opens_type(line) {
+        return Some(&field_name);
+    }
+    return None;
+}
+
+/// Whether a line opens a struct or enum whose members sort by name.
+fn opens_type(line: &str) -> bool {
+    let bare = line
+        .split_once("pub(crate) ")
+        .map_or(line, |rest| return rest.1)
+        .trim_start_matches("pub ");
+    return bare.starts_with("struct ") || bare.starts_with("enum ");
+}
+
+/// Sorts one block's members in place, reporting whether anything moved.
+fn sort_block(lines: &mut Vec<String>, open: usize, close: usize, named: &NameOf) -> bool {
+    let found = members(lines, open, close, named);
+    let order: Vec<String> = found
+        .iter()
+        .filter_map(|item| return item.name.clone())
+        .collect();
+    let mut sorted = order.clone();
+    sorted.sort();
+    if order == sorted || order.len() < 2 {
+        return false;
+    }
+    let mut ranked: Vec<&Member> = found.iter().collect();
+    ranked.sort_by(|left, right| return left.name.cmp(&right.name));
+    let mut rebuilt: Vec<String> = Vec::new();
+    for member in ranked {
+        if let Some(span) = lines.get(member.start..=member.end) {
+            rebuilt.extend(span.iter().cloned());
+        }
+    }
+    let Some(first) = found.first() else {
+        return false;
+    };
+    let Some(last) = found.last() else {
+        return false;
+    };
+    drop(lines.splice(first.start..=last.end, rebuilt));
+    return true;
 }
 
 /// The identifiers and numbers a source carries, sorted, punctuation excluded.

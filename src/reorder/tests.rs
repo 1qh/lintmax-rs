@@ -106,3 +106,83 @@ fn a_const_function_sorts_as_a_function_not_a_constant() {
     );
     drop(fs::remove_file(&path));
 }
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn an_impl_blocks_members_sort_by_name() {
+    let path = fixture(
+        "impl-members",
+        "struct Held;\n\nimpl Held {\n    fn zulu(&self) {}\n\n    fn alpha(&self) {}\n}\n",
+    );
+    assert!(super::sort_members(&path), "the members are out of order");
+    let sorted = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        sorted.find("fn alpha") < sorted.find("fn zulu"),
+        "an impl block's members sort by their own names"
+    );
+    drop(fs::remove_file(&path));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_types_fields_sort_by_name() {
+    let path = fixture(
+        "type-members",
+        "struct Held {\n    zulu: usize,\n    alpha: usize,\n}\n",
+    );
+    assert!(super::sort_members(&path), "the fields are out of order");
+    let sorted = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        sorted.find("alpha") < sorted.find("zulu"),
+        "a type's fields sort by their own names"
+    );
+    drop(fs::remove_file(&path));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_block_already_in_order_is_left_alone() {
+    let path = fixture(
+        "ordered-members",
+        "struct Held {\n    alpha: usize,\n    zulu: usize,\n}\n",
+    );
+    assert!(
+        !super::sort_members(&path),
+        "a block whose members already ascend needs no rewrite"
+    );
+    drop(fs::remove_file(&path));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_brace_inside_a_literal_never_swallows_the_items_after_it() {
+    let path = fixture(
+        "literal-braces",
+        "fn opener() -> char {\n    return '{';\n}\n\n/// Doc.\ntype Held = usize;\n",
+    );
+    assert!(
+        sort_file(&path),
+        "the type after a brace-carrying literal is an item the walk can still see"
+    );
+    let sorted = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        sorted.find("type Held") < sorted.find("fn opener"),
+        "a type sorts above a function, which a raw-text depth walk never reaches"
+    );
+    drop(fs::remove_file(&path));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_lifetime_is_never_read_as_a_character_literal() {
+    assert_eq!(
+        super::code_only("fn held(value: &'static str) -> char { '}' }"),
+        "fn held(value: &'static str) -> char {  }",
+        "a lifetime apostrophe keeps its braces countable while a literal loses its own"
+    );
+}
