@@ -29,6 +29,8 @@ jobs:
       - run: cargo install --path .
       - name: dogfood (lintmax check on itself)
         run: cargo lintmax check
+      - name: restore the committed lockfile (the dogfood refreshes dependencies)
+        run: git checkout -- Cargo.lock
       - name: publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

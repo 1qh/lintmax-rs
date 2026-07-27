@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-lintmax"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "clap",
  "serde",
