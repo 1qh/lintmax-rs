@@ -4,6 +4,8 @@ on: [push, pull_request]
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  CARGO_HOME: ${{ github.workspace }}/.cargo-home
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target
 
 jobs:
   ci:
@@ -19,7 +21,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest,cargo-deny,cargo-machete,dprint,typos-cli,ripgrep,shellcheck,shfmt
-      - run: cargo install --path .
+      - run: cargo install --path . --root "${CARGO_HOME}"
+      - name: put the run-owned cargo bin on PATH (the gate is a cargo subcommand there)
+        run: echo "${CARGO_HOME}/bin" >> "${GITHUB_PATH}"
       - run: cargo lintmax check
   prune-history:
     needs: [ci]
