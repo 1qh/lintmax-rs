@@ -109,7 +109,21 @@ pub fn sort_tree(root: &Path) {
     for path in rust_files(root) {
         let _sorted = sort_file(&path);
         let _members = sort_members(&path);
+        report_stranded(&path);
     }
+}
+
+/// Names every member left with no doc comment in one file.
+///
+/// This runs on every file the sort walks rather than only on one it rewrote,
+/// because a doc stranded by an earlier pass survives in a tree that now sorts
+/// clean — a check reachable only through a rewrite cannot report it at all.
+fn report_stranded(path: &Path) {
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    let lines: Vec<String> = content.split('\n').map(str::to_owned).collect();
+    report_undocumented(path, &lines);
 }
 
 /// The name a member declaration carries, when the line opens one.
@@ -327,7 +341,6 @@ fn sort_file(path: &Path) -> bool {
         report_refusal(path, &original, &rewritten);
         return false;
     }
-    report_undocumented(path, &lines);
     return fs::write(path, rewritten).is_ok();
 }
 
@@ -545,10 +558,20 @@ fn separate(rebuilt: &mut Vec<String>) {
 /// describes something it is not. The item left with NONE is the detectable
 /// half, and the compiler cannot report it because its own lint reaches public
 /// items only.
+///
+/// Only an INHERENT impl is walked: a trait implementation's methods take their
+/// documentation from the trait, so reporting them names every such method in a
+/// tree and buries the one finding that is real.
 fn report_undocumented(path: &Path, lines: &[String]) {
     let mut index = 0_usize;
+    let mut inherent = false;
     while index < lines.len() {
-        if let Some(name) = undocumented_member(lines, index) {
+        if let Some(line) = lines.get(index)
+            && line.starts_with("impl ")
+        {
+            inherent = !line.contains(" for ");
+        }
+        if inherent && let Some(name) = undocumented_member(lines, index) {
             drop(writeln!(
                 io::stderr(),
                 "{}:{}: `{name}` carries no doc comment (a move can strand one onto its neighbour)",

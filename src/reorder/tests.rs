@@ -311,3 +311,36 @@ fn an_attribute_between_a_doc_and_its_member_still_counts_as_documented() {
         "an attribute sits between a doc and its item without detaching them"
     );
 }
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_trait_implementations_members_are_never_reported() {
+    let path = fixture(
+        "trait-impl",
+        "impl Render for Held {
+    fn render(&self) {}
+}
+
+impl Held {
+    fn zulu(&self) {}
+}
+",
+    );
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    let lines: Vec<String> = content.split('\n').map(str::to_owned).collect();
+    let named: Vec<String> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(at, _)| return super::undocumented_member(&lines, at))
+        .collect();
+    assert!(
+        named.contains(&"zulu".to_owned()),
+        "an inherent member with no doc is the finding"
+    );
+    assert!(
+        named.contains(&"render".to_owned()),
+        "the raw reader sees both, so the impl-kind filter is what separates them"
+    );
+    drop(fs::remove_file(&path));
+}
