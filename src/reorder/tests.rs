@@ -269,3 +269,45 @@ fn an_argument_comma_never_ends_a_member_early() {
     );
     drop(fs::remove_file(&path));
 }
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_member_left_with_no_doc_is_named() {
+    let lines: Vec<String> = vec![
+        "impl Held {".to_owned(),
+        "    /// Doc.".to_owned(),
+        "    fn alpha(&self) {}".to_owned(),
+        String::new(),
+        "    fn zulu(&self) {}".to_owned(),
+        "}".to_owned(),
+    ];
+    assert_eq!(
+        super::undocumented_member(&lines, 2),
+        None,
+        "a member carrying its own doc is not reported"
+    );
+    assert_eq!(
+        super::undocumented_member(&lines, 4),
+        Some("zulu".to_owned()),
+        "the item a stranded doc left behind is the detectable half"
+    );
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn an_attribute_between_a_doc_and_its_member_still_counts_as_documented() {
+    let lines: Vec<String> = vec![
+        "impl Held {".to_owned(),
+        "    /// Doc.".to_owned(),
+        "    #[must_use]".to_owned(),
+        "    fn alpha(&self) {}".to_owned(),
+        "}".to_owned(),
+    ];
+    assert_eq!(
+        super::undocumented_member(&lines, 3),
+        None,
+        "an attribute sits between a doc and its item without detaching them"
+    );
+}

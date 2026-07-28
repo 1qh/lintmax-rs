@@ -327,6 +327,7 @@ fn sort_file(path: &Path) -> bool {
         report_refusal(path, &original, &rewritten);
         return false;
     }
+    report_undocumented(path, &lines);
     return fs::write(path, rewritten).is_ok();
 }
 
@@ -535,6 +536,57 @@ fn separate(rebuilt: &mut Vec<String>) {
         return;
     }
     rebuilt.push(String::new());
+}
+
+/// Reports any item a move left with no doc comment of its own.
+///
+/// A stranded doc does not vanish — it merges into the doc of whatever item now
+/// follows it, so both items still read as documented while one of them
+/// describes something it is not. The item left with NONE is the detectable
+/// half, and the compiler cannot report it because its own lint reaches public
+/// items only.
+fn report_undocumented(path: &Path, lines: &[String]) {
+    let mut index = 0_usize;
+    while index < lines.len() {
+        if let Some(name) = undocumented_member(lines, index) {
+            drop(writeln!(
+                io::stderr(),
+                "{}:{}: `{name}` carries no doc comment (a move can strand one onto its neighbour)",
+                path.display(),
+                index.saturating_add(1)
+            ));
+        }
+        index = index.saturating_add(1);
+    }
+}
+
+/// The name of the member declared at `at`, when nothing documents it.
+fn undocumented_member(lines: &[String], at: usize) -> Option<String> {
+    let Some(line) = lines.get(at) else {
+        return None;
+    };
+    if !line.starts_with("    ") {
+        return None;
+    }
+    let Some(name) = member_name(line) else {
+        return None;
+    };
+    let mut above = at;
+    while above > 0 {
+        above = above.saturating_sub(1);
+        let Some(previous) = lines.get(above) else {
+            return None;
+        };
+        let trimmed = previous.trim_start();
+        if trimmed.starts_with("#[") {
+            continue;
+        }
+        if trimmed.starts_with("///") {
+            return None;
+        }
+        return Some(name);
+    }
+    return Some(name);
 }
 
 /// Reports a refusal, naming the file and what the rewrite would have lost.
