@@ -316,16 +316,13 @@ fn an_attribute_between_a_doc_and_its_member_still_counts_as_documented() {
 /// On assertion failure.
 #[test]
 fn a_trait_implementations_members_are_never_reported() {
+    let member = "zulu";
     let path = fixture(
         "trait-impl",
-        "impl Render for Held {
-    fn render(&self) {}
-}
-
-impl Held {
-    fn zulu(&self) {}
-}
-",
+        &format!(
+            "impl Render for Held {{\n    fn render(&self) {{}}\n}}\n\nimpl Held {{\n    fn \
+             {member}(&self) {{}}\n}}\n"
+        ),
     );
     let content = fs::read_to_string(&path).unwrap_or_default();
     let lines: Vec<String> = content.split('\n').map(str::to_owned).collect();
@@ -343,4 +340,42 @@ impl Held {
         "the raw reader sees both, so the impl-kind filter is what separates them"
     );
     drop(fs::remove_file(&path));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_const_whose_value_sits_on_the_next_line_moves_with_that_value() {
+    let body = "\
+/// Alpha.
+pub const ALPHA: &str = \"a\";
+
+/// An opener.
+pub type Opener = usize;
+
+/// Zebra.
+pub const ZEBRA: [(f32, u16); 2] =
+    [(1.0, 2), (3.0, 4)];
+
+/// A held value.
+pub struct Held {
+    /// Its field.
+    pub field: usize,
+}
+
+/// Runs.
+pub fn run() {}
+
+/// Walks.
+pub fn walk() {}
+";
+    let path = fixture("continued-const", body);
+    let _sorted_once = sort_file(&path);
+    let sorted = fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        sorted.contains("ZEBRA: [(f32, u16); 2] =\n    [(1.0, 2), (3.0, 4)];"),
+        "the declaration carries its value with it: a walk that ends the item on its declaration \
+         line because that line's own brackets happen to balance leaves the value stranded where \
+         the item used to sit, and no token comparison catches it because every token survives"
+    );
 }

@@ -54,6 +54,15 @@ struct Member {
     start: usize,
 }
 
+/// Which kind of block the doc scan is inside.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Block {
+    /// An inherent block, whose members a sort moves.
+    Inherent,
+    /// Anything else, whose declarations a sort never reorders.
+    Other,
+}
+
 /// Whether the quote at `at` opens a character literal rather than a lifetime.
 fn opens_char_literal(chars: &[char], at: usize) -> bool {
     let escaped = chars.get(at.saturating_add(1)) == Some(&'\\');
@@ -237,7 +246,6 @@ fn items(lines: &[String]) -> Vec<Item> {
 /// The last line of the item opening at `start`, counting every bracket kind.
 fn extent(lines: &[String], start: usize) -> usize {
     let mut depth = 0_isize;
-    let mut opened = false;
     let mut index = start;
     while index < lines.len() {
         let Some(line) = lines.get(index) else {
@@ -248,9 +256,9 @@ fn extent(lines: &[String], start: usize) -> usize {
             let opens = isize::try_from(code.matches(open).count()).unwrap_or(0);
             let closes = isize::try_from(code.matches(close).count()).unwrap_or(0);
             depth = depth.saturating_add(opens).saturating_sub(closes);
-            opened = opened || code.contains(open);
         }
-        if depth <= 0 && (line.trim_end().ends_with(';') || opened) {
+        let ends = line.trim_end();
+        if depth <= 0 && (ends.ends_with(';') || ends.ends_with('}')) {
             return index;
         }
         index = index.saturating_add(1);
@@ -564,14 +572,12 @@ fn separate(rebuilt: &mut Vec<String>) {
 /// tree and buries the one finding that is real.
 fn report_undocumented(path: &Path, lines: &[String]) {
     let mut index = 0_usize;
-    let mut inherent = false;
+    let mut block = Block::Other;
     while index < lines.len() {
-        if let Some(line) = lines.get(index)
-            && line.starts_with("impl ")
+        block = block_after(lines.get(index), block);
+        if block == Block::Inherent
+            && let Some(name) = undocumented_member(lines, index)
         {
-            inherent = !line.contains(" for ");
-        }
-        if inherent && let Some(name) = undocumented_member(lines, index) {
             drop(writeln!(
                 io::stderr(),
                 "{}:{}: `{name}` carries no doc comment (a move can strand one onto its neighbour)",
@@ -581,6 +587,28 @@ fn report_undocumented(path: &Path, lines: &[String]) {
         }
         index = index.saturating_add(1);
     }
+}
+
+/// Which block the scan is inside once `line` has been read.
+///
+/// An inherent block's members are the ones a sort moves, so the scan enters on
+/// its opening and LEAVES on its closing brace — a flag raised and never lowered
+/// reports every later free function's own locals, which a sort cannot move and
+/// a reader therefore learns to ignore.
+fn block_after(line: Option<&String>, current: Block) -> Block {
+    let Some(text) = line else {
+        return current;
+    };
+    if text.starts_with("impl ") {
+        if text.contains(" for ") {
+            return Block::Other;
+        }
+        return Block::Inherent;
+    }
+    if text == "}" {
+        return Block::Other;
+    }
+    return current;
 }
 
 /// The name of the member declared at `at`, when nothing documents it.
