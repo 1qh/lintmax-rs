@@ -910,14 +910,15 @@ fn run_feature_matrix() -> ExitCode {
 
 /// Runs the cargo-machete unused dependency check.
 ///
-/// Invoked as the binary rather than as `cargo machete`, because the subcommand
-/// form relies on cargo-machete stripping its own name from the argument list
-/// and it instead walks `machete` as a path, failing the stage on a clean tree.
+/// Invoked as the binary with an EXPLICIT path. The `cargo machete` form relies
+/// on cargo-machete stripping its own name and it instead walks `machete` as a
+/// path; the bare binary panics on some versions for want of any argument. A
+/// path satisfies both, and neither failure looks like an invocation bug.
 fn run_machete() -> ExitCode {
     let excludes = vendored_excludes();
     let ignore_path = config_path(".ignore");
     if excludes.is_empty() || ignore_path.exists() {
-        return cmd_quiet("cargo-machete", &[]);
+        return cmd_quiet("cargo-machete", &["."]);
     }
     let body: String = excludes
         .iter()
@@ -925,9 +926,9 @@ fn run_machete() -> ExitCode {
         .collect::<Vec<_>>()
         .join("\n");
     if fs::write(&ignore_path, body).is_err() {
-        return cmd_quiet("cargo-machete", &[]);
+        return cmd_quiet("cargo-machete", &["."]);
     }
-    let result = cmd_quiet("cargo-machete", &[]);
+    let result = cmd_quiet("cargo-machete", &["."]);
     discard(fs::remove_file(&ignore_path));
     return result;
 }
