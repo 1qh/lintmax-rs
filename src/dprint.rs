@@ -7,10 +7,25 @@ use std::process::Command;
 /// Marker prefix every dprint plugin URL shares.
 const HOST: &str = "https://plugins.dprint.dev/";
 
-/// Plugin name from a wasm filename (`toml-0.7.0`, `malva-v0.16.0`) by dropping
-/// the version suffix.
+/// Plugin name from a wasm filename, dropping only a TRAILING version.
+///
+/// Splitting at the first separator resolves `lax-sql` to `lax`, which is a
+/// different plugin, and the wrong name still reads as a name — so the only
+/// symptom is a 404 against a plausible URL.
 fn plugin_name(file: &str) -> &str {
-    return file.split(['-', '@']).next().unwrap_or(file);
+    let Some((head, tail)) = file.rsplit_once(|ch| return ch == '-' || ch == '@') else {
+        return file;
+    };
+    let digits = tail.trim_start_matches('v');
+    let mut parts = digits.split('.');
+    let versioned = digits.split('.').count() == 3
+        && parts.all(|part| {
+            return !part.is_empty() && part.chars().all(|ch| return ch.is_ascii_digit());
+        });
+    if versioned {
+        return head;
+    }
+    return file;
 }
 
 /// Extracts the plugin path (e.g. `dprint/toml`, `g-plane/malva`) from a pinned
