@@ -23,6 +23,7 @@ fn a_project_with_no_exceptions_gets_the_embedded_config_unchanged() {
 /// The merged config for one declared advisory and one declared duplicate.
 fn merged_sample() -> String {
     let declared = super::Exceptions {
+        generated: Vec::new(),
         advisories: vec!["RUSTSEC-2026-0192".to_owned()],
         duplicates: vec!["ttf-parser@0.25.1".to_owned()],
     };
@@ -61,6 +62,7 @@ fn a_declared_duplicate_lands_under_the_bans_section() {
 #[test]
 fn an_undeclared_advisory_is_still_caught() {
     let declared = super::Exceptions {
+        generated: Vec::new(),
         advisories: vec!["RUSTSEC-2026-0192".to_owned()],
         duplicates: vec![],
     };
@@ -68,5 +70,16 @@ fn an_undeclared_advisory_is_still_caught() {
     assert!(
         !merged.contains("RUSTSEC-2020-0000"),
         "only the declared advisories are ignored, so the gate still fails on any other"
+    );
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_declared_generated_path_reaches_the_formatter_excludes() {
+    let base = include_str!("../configs/dprint.json");
+    assert!(
+        base.contains("\"excludes\": [\n"),
+        "the embedded config carries the excludes block this fold anchors on"
     );
 }

@@ -166,6 +166,16 @@ struct Exceptions {
     /// `crate@version` entries whose duplication is forced by a dependency.
     #[serde(default)]
     duplicates: Vec<String>,
+    /// Paths a GENERATOR owns, which the formatter must leave exactly as written.
+    ///
+    /// A generated file belongs to the tool that emits it, so formatting it puts
+    /// the gate and that generator in a loop where each undoes the other — and
+    /// the generator then reports its own output as out of date forever, which
+    /// reads as a stale config rather than as two tools disagreeing. This is
+    /// DATA about one project rather than a rule, which is why it is declared
+    /// here and never by relaxing a check.
+    #[serde(default)]
+    generated: Vec<String>,
 }
 
 /// Cargo wrapper for subcommand dispatch.
@@ -1223,6 +1233,27 @@ fn write_config(name: &str, content: &str) {
     discard(fs::write(&path, final_content));
 }
 
+/// Folds the project's generated paths into the embedded formatter excludes.
+///
+/// The excludes are extended rather than replaced, so a project can never drop
+/// the ones the gate itself relies on — the only thing it may add is a path a
+/// generator owns.
+fn dprint_with_generated(content: &str) -> String {
+    let generated = project_exceptions().generated;
+    if generated.is_empty() {
+        return content.to_owned();
+    }
+    let added = generated
+        .iter()
+        .map(|path| return format!("    \"{path}\",\n"))
+        .collect::<String>();
+    return content.replacen(
+        "  \"excludes\": [\n",
+        &format!("  \"excludes\": [\n{added}"),
+        1,
+    );
+}
+
 /// Reads the project's declared exceptions, when it declares any.
 ///
 /// A file that cannot be parsed is reported and then treated as absent, because
@@ -1292,7 +1323,11 @@ fn substitute(
 fn write_configs() {
     ensure_tools();
     for &(name, content) in MANAGED_CONFIGS {
-        write_config(name, content);
+        if name == "dprint.json" {
+            write_config(name, &dprint_with_generated(content));
+        } else {
+            write_config(name, content);
+        }
     }
     bump_dprint_plugins();
 }
