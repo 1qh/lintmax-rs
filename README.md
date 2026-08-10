@@ -18,16 +18,13 @@ cargo lintmax version  # print the version
 cargo lintmax rules    # list the active rule set
 ```
 
-Everything else the tool does for itself, never as a command: toolchain
-`@latest` refresh on cadence (forced under CI), the green-tree-hash cache, and
-the dependency-staleness scan.
+Everything else the tool does for itself, never as a command: toolchain `@latest` refresh on cadence (forced under CI), the green-tree-hash cache, and the dependency-staleness scan.
 
 ## What it does
 
 One command runs, over every applicable file at max strictness:
 
-- clippy — every lint group (pedantic, nursery, cargo, restriction) denied,
-  `--all-targets --all-features` (lib + bins + tests + examples + benches)
+- clippy — every lint group (pedantic, nursery, cargo, restriction) denied, `--all-targets --all-features` (lib + bins + tests + examples + benches)
 - rustfmt over all `.rs`
 - dprint over every other file type (toml, json, md, yaml, dockerfile, css, html)
 - shellcheck + shfmt over every shell script
@@ -38,9 +35,7 @@ One command runs, over every applicable file at max strictness:
 - cargo-deny dependency audit + cargo-machete unused-dep check
 - in-house advisories: dupconst, gibberish-identifier, unguarded-float-division
 
-All configs are embedded in the binary. Your project stays clean — no
-clippy.toml, no rustfmt.toml, no deny.toml, no dprint.json. Update
-`cargo-lintmax` = update every project's strictness.
+All configs are embedded in the binary. Your project stays clean — no clippy.toml, no rustfmt.toml, no deny.toml, no dprint.json. Update `cargo-lintmax` = update every project's strictness.
 
 ## What's enforced
 
