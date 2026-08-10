@@ -83,3 +83,17 @@ fn a_declared_generated_path_reaches_the_formatter_excludes() {
         "the embedded config carries the excludes block this fold anchors on"
     );
 }
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn an_unknown_key_keeps_the_exceptions_a_project_already_declared() {
+    let text = "advisories = [\"RUSTSEC-0000-0000\"]\nfrom-a-newer-gate = [\"x\"]\n";
+    let parsed = toml::from_str::<super::Exceptions>(text).ok();
+    assert_eq!(
+        parsed.map(|held| return held.advisories),
+        Some(vec!["RUSTSEC-0000-0000".to_owned()]),
+        "a key this version does not know must not drop the exceptions it does know, or a \
+         consumer running an older gate fails its supply-chain stage on every declared advisory"
+    );
+}

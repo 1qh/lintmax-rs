@@ -157,8 +157,13 @@ const RUSTC_FORBID: &[&str] = &[
 /// so an advisory or duplicate it introduces is not something the project can
 /// fix by changing its own manifest. Naming each one keeps the check ON: the
 /// gate still fails the moment a DIFFERENT advisory or duplicate appears.
+/// An unknown key is IGNORED rather than denied, because consumers upgrade the
+/// gate independently: denying one makes a file that names a key this version
+/// does not know fail to parse ENTIRELY, which drops every exception the project
+/// had already declared and fails its supply-chain stage on advisories that were
+/// exempted for good reasons — a failure that points at the dependency tree
+/// rather than at the one added key.
 #[derive(Debug, Default, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Exceptions {
     /// Advisory identifiers to ignore, each with a reason in the project's ADR.
     #[serde(default)]
