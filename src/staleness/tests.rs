@@ -1,4 +1,6 @@
-use super::{json_string_field, major, parse_dep_line, same_major};
+use std::path::Path;
+
+use super::{is_generated, json_string_field, major, parse_dep_line, same_major};
 
 /// # Panics
 /// On assertion failure.
@@ -44,4 +46,23 @@ fn parses_plain_dep() {
 fn same_major_matches_across_minor() {
     assert!(same_major("1.0.1", "1.9.9"));
     assert!(!same_major("1.0.0", "2.0.0"));
+}
+
+/// # Panics
+/// On assertion failure.
+#[test]
+fn a_declared_generated_workflow_is_owned_by_its_generator() {
+    let owned = vec![".github/workflows/release.yml".to_owned()];
+    assert!(
+        is_generated(Path::new("/repo/.github/workflows/release.yml"), &owned),
+        "a declared workflow must read as the generator's"
+    );
+    assert!(
+        !is_generated(Path::new("/repo/.github/workflows/ci.yml"), &owned),
+        "a workflow the project writes stays this project's"
+    );
+    assert!(
+        !is_generated(Path::new("/repo/.github/workflows/ci.yml"), &[]),
+        "declaring nothing must exempt nothing"
+    );
 }

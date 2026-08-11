@@ -166,6 +166,20 @@ fn is_versionish(version: &str) -> bool {
         .is_some_and(|ch| return ch.is_ascii_digit());
 }
 
+/// Whether a workflow is one a GENERATOR owns rather than this project.
+///
+/// A pin inside generated output belongs to the tool that emits it, so bumping
+/// it here is hand-editing that tool's output and the next generate undoes it —
+/// the honest owner is the generator's own version. Compared on the path's
+/// SUFFIX so a declaration written relative to the repo root matches the
+/// absolute path the scan walks.
+fn is_generated(path: &Path, generated: &[String]) -> bool {
+    let text = path.to_string_lossy().replace('\\', "/");
+    return generated
+        .iter()
+        .any(|owned| return text.ends_with(owned.trim_start_matches("./")));
+}
+
 /// Whether a path is a YAML workflow file.
 fn is_yaml(path: &Path) -> bool {
     return path
@@ -265,21 +279,22 @@ fn same_major(left: &str, right: &str) -> bool {
 /// scan is always advisory and never blocks a clean gate.
 #[inline]
 #[must_use]
-pub fn scan(root: &Path) -> Vec<Issue> {
+pub fn scan(root: &Path, generated: &[String]) -> Vec<Issue> {
     if env::var(ENV_SKIP).is_ok_and(|val| return val == "1") {
         return Vec::new();
     }
     let crates_root = root.to_path_buf();
     let actions_root = root.to_path_buf();
+    let owned: Vec<String> = generated.to_vec();
     let crates_handle = thread::spawn(move || return scan_crates(&crates_root));
-    let actions = scan_actions(&actions_root);
+    let actions = scan_actions(&actions_root, &owned);
     let mut merged = crates_handle.join().unwrap_or_default();
     merged.extend(actions);
     return merged;
 }
 
 /// Checks GitHub Actions `uses:` pins against each action's latest release.
-fn scan_actions(root: &Path) -> Vec<Issue> {
+fn scan_actions(root: &Path, generated: &[String]) -> Vec<Issue> {
     let dir = root.join(".github").join("workflows");
     let Ok(entries) = fs::read_dir(&dir) else {
         return Vec::new();
@@ -288,6 +303,7 @@ fn scan_actions(root: &Path) -> Vec<Issue> {
     for entry in entries.flatten() {
         let path = entry.path();
         if is_yaml(&path)
+            && !is_generated(&path, generated)
             && let Ok(text) = fs::read_to_string(&path)
         {
             collect_action_pins(&text, &mut pins);

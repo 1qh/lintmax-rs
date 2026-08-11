@@ -496,7 +496,7 @@ fn advisory(prefix: &str, body: &str) {
 /// and unguarded-float-division analyzers. All print to stderr and never change
 /// the exit code (advisory phases).
 fn run_advisories() {
-    let stale = staleness::scan(Path::new("."));
+    let stale = staleness::scan(Path::new("."), &project_exceptions().generated);
     advisory(
         &format!(
             "{} dep(s) behind latest (bump toward active-maintenance window):\n",
