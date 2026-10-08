@@ -5,13 +5,14 @@
 
 use alloc::collections::BTreeMap;
 use std::{
-    env, fs,
-    path::PathBuf,
-    process::Command,
+    env, fs, io,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
+
+use crate::files::required;
 
 /// Cache subdirectory under the OS cache root.
 const APP_DIR: &str = "lintmax-rs";
@@ -158,31 +159,27 @@ fn state_path() -> Option<PathBuf> {
     return Some(dir);
 }
 
-/// Hashes the tracked working tree: the lintmax version tag plus every
-/// `git ls-files` path and its content, so any source edit changes the digest.
+/// Hashes every eligible working-tree path and its content plus the version.
+///
+/// # Errors
+/// Returns an error if eligible file enumeration fails.
 #[inline]
-#[must_use]
-pub fn tree_hash(version: &str) -> Option<String> {
-    let Ok(output) = Command::new("git").args(["ls-files", "-z"]).output() else {
-        return None;
-    };
-    if !output.status.success() {
-        return None;
-    }
-    let Ok(listing) = String::from_utf8(output.stdout) else {
-        return None;
+pub fn tree_hash(version: &str) -> io::Result<String> {
+    let paths = match required(Path::new(".")) {
+        Ok(found) => found,
+        Err(error) => return Err(error),
     };
     let mut acc = String::from("lintmax-rs:");
     acc.push_str(version);
     acc.push('\n');
-    for file in listing.split('\0').filter(|path| return !path.is_empty()) {
-        let digest = fs::read(file).map_or(0, |body| return fnv1a(&body));
-        acc.push_str(file);
+    for file in paths {
+        let digest = fs::read(&file).map_or(0, |body| return fnv1a(&body));
+        acc.push_str(&hex16(fnv1a(file.as_os_str().as_encoded_bytes())));
         acc.push(':');
         acc.push_str(&hex16(digest));
         acc.push('\n');
     }
-    return Some(hex16(fnv1a(acc.as_bytes())));
+    return Ok(hex16(fnv1a(acc.as_bytes())));
 }
 
 #[cfg(test)]

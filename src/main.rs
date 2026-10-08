@@ -5,6 +5,7 @@ extern crate alloc;
 pub mod analyze;
 pub mod comment;
 pub mod dprint;
+pub mod files;
 pub mod reorder;
 pub mod staleness;
 pub mod state;
@@ -181,6 +182,23 @@ struct Exceptions {
     /// here and never by relaxing a check.
     #[serde(default)]
     generated: Vec<String>,
+}
+
+/// One `ShellCheck` diagnostic, with its source location and severity.
+#[derive(serde::Deserialize)]
+struct ShellFinding {
+    /// `ShellCheck` warning number.
+    code: u64,
+    /// First column of the finding.
+    column: u64,
+    /// Filename carrying the finding.
+    file: String,
+    /// Severity reported by `ShellCheck`.
+    level: String,
+    /// First line of the finding.
+    line: u64,
+    /// Explanation of the finding.
+    message: String,
 }
 
 /// Cargo wrapper for subcommand dispatch.
@@ -435,9 +453,9 @@ fn run_check_all() -> ExitCode {
         run_test,
         run_typos,
     ]);
-    run_advisories();
+    let advisories = run_advisories();
     clean_configs();
-    return result;
+    return worst(result, advisories);
 }
 
 /// Whether the gate runs under CI (where the green-cache is bypassed so a fresh
@@ -450,9 +468,10 @@ fn in_ci() -> bool {
 /// unchanged since the last clean run, otherwise runs the full gate and records
 /// the green tree-hash on success.
 fn run_default() -> ExitCode {
-    let key = (!in_ci())
-        .then(|| return state::tree_hash(pkg_version()))
-        .flatten();
+    let key = match cache_key() {
+        Ok(hash) => hash,
+        Err(error) => return enumeration_failure(&error),
+    };
     if let (Some(hash), Some(cwd)) = (key.as_ref(), state::cwd_key())
         && state::load().last_green_by_cwd.get(&cwd) == Some(hash)
     {
@@ -465,6 +484,26 @@ fn run_default() -> ExitCode {
         emit("ok");
     }
     return result;
+}
+
+/// Computes the local cache key, bypassing the cache under CI.
+///
+/// # Errors
+/// Returns an error if eligible file enumeration fails.
+fn cache_key() -> io::Result<Option<String>> {
+    if in_ci() {
+        return Ok(None);
+    }
+    return state::tree_hash(pkg_version()).map(Some);
+}
+
+/// Reports why file enumeration failed and fails the current gate stage.
+fn enumeration_failure(error: &io::Error) -> ExitCode {
+    discard(writeln!(
+        io::stderr(),
+        "lintmax: file enumeration failed: {error}"
+    ));
+    return ExitCode::FAILURE;
 }
 
 /// Records the current tree-hash as the cwd's last green run.
@@ -490,13 +529,22 @@ fn advisory(prefix: &str, body: &str) {
     }
 }
 
-/// Runs the non-failing in-house advisories.
-///
-/// Covers the dependency staleness scan plus the dupconst, gibberish-identifier,
-/// and unguarded-float-division analyzers. All print to stderr and never change
-/// the exit code (advisory phases).
-fn run_advisories() {
-    let stale = staleness::scan(Path::new("."), &project_exceptions().generated);
+/// Runs the in-house advisories, failing only when file enumeration fails.
+fn run_advisories() -> ExitCode {
+    return run_seq(&[
+        run_staleness_advisory,
+        run_dupconst_advisory,
+        run_gibberish_advisory,
+        run_floatdiv_advisory,
+    ]);
+}
+
+/// Reports outdated dependencies without making outdated pins a gate failure.
+fn run_staleness_advisory() -> ExitCode {
+    let stale = match staleness::scan(Path::new("."), &project_exceptions().generated) {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
     advisory(
         &format!(
             "{} dep(s) behind latest (bump toward active-maintenance window):\n",
@@ -504,7 +552,15 @@ fn run_advisories() {
         ),
         &staleness::format(&stale),
     );
-    let dups = analyze::dupconst();
+    return ExitCode::SUCCESS;
+}
+
+/// Reports duplicate-value const groups.
+fn run_dupconst_advisory() -> ExitCode {
+    let dups = match analyze::dupconst() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
     advisory(
         &format!(
             "{} duplicate-value const group(s) (collapse to one):\n",
@@ -512,8 +568,25 @@ fn run_advisories() {
         ),
         &analyze::format_dupconst(&dups),
     );
-    advisory("", &analyze::format_gibberish(&analyze::gibberish()));
-    let fdiv = analyze::floatdiv();
+    return ExitCode::SUCCESS;
+}
+
+/// Reports hash-gibberish identifiers.
+fn run_gibberish_advisory() -> ExitCode {
+    let found = match analyze::gibberish() {
+        Ok(names) => names,
+        Err(error) => return enumeration_failure(&error),
+    };
+    advisory("", &analyze::format_gibberish(&found));
+    return ExitCode::SUCCESS;
+}
+
+/// Reports unguarded float divisions.
+fn run_floatdiv_advisory() -> ExitCode {
+    let fdiv = match analyze::floatdiv() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
     advisory(
         &format!(
             "{} unguarded float-division site(s) (NaN/Inf risk on empty input):\n",
@@ -521,6 +594,7 @@ fn run_advisories() {
         ),
         &analyze::format_floatdiv(&fdiv),
     );
+    return ExitCode::SUCCESS;
 }
 
 /// Builds clippy lint flags.
@@ -766,8 +840,10 @@ fn run_fix() -> ExitCode {
 /// The rewrite refuses itself whenever a file's token multiset would change, so
 /// a misparse leaves the file untouched rather than losing a declaration.
 fn run_reorder_items() -> ExitCode {
-    reorder::sort_tree(Path::new("."));
-    return ExitCode::SUCCESS;
+    return match reorder::sort_tree(Path::new(".")) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => enumeration_failure(&error),
+    };
 }
 
 /// Formats rust and all other files, gating on a formatter that fails (e.g. a
@@ -782,55 +858,35 @@ fn run_fmt_all() -> ExitCode {
     return worst(result_rust, result_dprint);
 }
 
-/// Names of the workspace-member packages, for formatting them explicitly.
-fn workspace_member_names() -> Vec<String> {
-    let output = Command::new("cargo")
-        .args(["metadata", "--no-deps", "--format-version", "1"])
-        .output();
-    let Ok(out) = output else {
-        return Vec::new();
-    };
-    let Ok(meta) = serde_json::from_slice::<Value>(&out.stdout) else {
-        return Vec::new();
-    };
-    let members = workspace_member_ids(&meta);
-    let packages = meta.get("packages").and_then(Value::as_array);
-    let mut names = Vec::new();
-    for pkg in packages.into_iter().flatten() {
-        let is_member = pkg
-            .get("id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| return members.contains(id));
-        if is_member && let Some(name) = pkg.get("name").and_then(Value::as_str) {
-            names.push(name.to_owned());
-        }
-    }
-    return names;
-}
-
-/// Runs cargo fmt over each workspace member explicitly, never `--all`.
-///
-/// `--all` also walks excluded vendored path-deps, and the rustfmt `ignore` glob
-/// that would re-exclude them is honored inconsistently across rustfmt versions.
+/// Formats explicit eligible Rust files without recursively loading modules.
 fn run_fmt_members(rustfmt: &str, extra: &[&str]) -> ExitCode {
-    let names = workspace_member_names();
-    let mut args: Vec<String> = vec!["fmt".to_owned()];
-    if names.is_empty() {
-        args.push("--all".to_owned());
-    } else {
-        for name in &names {
-            args.push("-p".to_owned());
-            args.push(name.clone());
+    let eligible = match project_files() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
+    let paths: Vec<PathBuf> = eligible
+        .into_iter()
+        .filter(|path| {
+            return path
+                .extension()
+                .is_some_and(|extension| return extension == "rs");
+        })
+        .collect();
+    if paths.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let mut result = ExitCode::SUCCESS;
+    for path in paths {
+        let status = Command::new(rustfmt)
+            .args(extra)
+            .args(["--config", "skip_children=true"])
+            .arg(path)
+            .status();
+        if !status.is_ok_and(|completed| return completed.success()) {
+            result = ExitCode::FAILURE;
         }
     }
-    if !extra.is_empty() {
-        args.push("--".to_owned());
-        for entry in extra {
-            args.push((*entry).to_owned());
-        }
-    }
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd_env("cargo", &refs, &[("RUSTFMT", rustfmt)]);
+    return result;
 }
 
 /// Checks formatting of rust and all other files.
@@ -844,27 +900,102 @@ fn run_fmt_check() -> ExitCode {
     return worst(result_rust, result_dprint);
 }
 
-/// Runs a dprint action, excluding vendored external package directories.
-fn run_dprint(action: &str) -> ExitCode {
-    let mut args = vec![action.to_owned()];
-    let globs = vendored_excludes();
-    if !globs.is_empty() {
-        args.push("--excludes".to_owned());
-        args.extend(globs);
-    }
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd("dprint", &refs);
+/// Eligible project files, excluding vendored external package directories.
+///
+/// # Errors
+/// Returns an error if the root or eligible file paths cannot be read.
+fn project_files() -> io::Result<Vec<PathBuf>> {
+    let root = match env::current_dir() {
+        Ok(directory) => directory,
+        Err(error) => return Err(error),
+    };
+    let paths = match files::required(&root) {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
+    let excludes: Vec<PathBuf> = vendored_excludes()
+        .iter()
+        .map(|glob| return root.join(glob.strip_suffix("**").unwrap_or(glob)))
+        .collect();
+    return Ok(paths
+        .into_iter()
+        .filter(|path| {
+            return !excludes
+                .iter()
+                .any(|exclude| return path.starts_with(exclude));
+        })
+        .collect());
 }
 
-/// Runs typos with the given extra args, excluding vendored external directories.
-fn run_typos_excluded(extra: &[&str]) -> ExitCode {
-    let mut args: Vec<String> = extra.iter().map(|arg| return (*arg).to_owned()).collect();
-    for glob in vendored_excludes() {
-        args.push("--exclude".to_owned());
-        args.push(glob);
+/// Runs dprint on explicit eligible files, keeping configured exclusions.
+fn run_dprint(action: &str) -> ExitCode {
+    let paths = match project_files() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
+    if paths.is_empty() {
+        return ExitCode::SUCCESS;
     }
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd("typos", &refs);
+    let patterns = match dprint_patterns(&paths) {
+        Ok(found) => found,
+        Err(error) => {
+            emit(&error.to_string());
+            return ExitCode::FAILURE;
+        },
+    };
+    let status = Command::new("dprint").arg(action).args(patterns).status();
+    return if status.is_ok_and(|completed| return completed.success()) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    };
+}
+
+/// Converts eligible filenames into literal dprint glob arguments.
+///
+/// # Errors
+/// Returns an error if a filename cannot be represented as UTF-8.
+fn dprint_patterns(paths: &[PathBuf]) -> io::Result<Vec<String>> {
+    return paths
+        .iter()
+        .map(|path| {
+            return path.to_str().map(literal_glob).ok_or_else(|| {
+                return io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "dprint cannot safely select a non-UTF-8 filename",
+                );
+            });
+        })
+        .collect();
+}
+
+/// Escapes a literal filename for dprint's glob arguments.
+fn literal_glob(text: &str) -> String {
+    let mut pattern = String::new();
+    for character in text.chars() {
+        if matches!(character, '*' | '?' | '[' | ']' | '{' | '}' | '!' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(character);
+    }
+    return pattern;
+}
+
+/// Runs typos on explicit eligible files, keeping configured exclusions.
+fn run_typos_excluded(extra: &[&str]) -> ExitCode {
+    let paths = match project_files() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
+    if paths.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let status = Command::new("typos").args(extra).args(paths).status();
+    return if status.is_ok_and(|completed| return completed.success()) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    };
 }
 
 /// Refreshes the toolchain to latest on a cadence: every run under CI, otherwise
@@ -923,95 +1054,135 @@ fn run_feature_matrix() -> ExitCode {
     return cmd("cargo", &refs);
 }
 
-/// Runs the cargo-machete unused dependency check.
-///
-/// Invoked as the binary with an EXPLICIT path. The `cargo machete` form relies
-/// on cargo-machete stripping its own name and it instead walks `machete` as a
-/// path; the bare binary panics on some versions for want of any argument. A
-/// path satisfies both, and neither failure looks like an invocation bug.
+/// Runs cargo-machete on explicit eligible manifests rather than a directory.
 fn run_machete() -> ExitCode {
-    let excludes = vendored_excludes();
-    let ignore_path = config_path(".ignore");
-    if excludes.is_empty() || ignore_path.exists() {
-        return cmd_quiet("cargo-machete", &["."]);
-    }
-    let body: String = excludes
-        .iter()
-        .map(|glob| return glob.strip_suffix("**").unwrap_or(glob).to_owned())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if fs::write(&ignore_path, body).is_err() {
-        return cmd_quiet("cargo-machete", &["."]);
-    }
-    let result = cmd_quiet("cargo-machete", &["."]);
-    discard(fs::remove_file(&ignore_path));
-    return result;
-}
-
-/// Collects the stdout lines of an rg invocation as deduplicated paths,
-/// appending any not already present.
-fn collect_rg(args: &[&str], paths: &mut Vec<PathBuf>) {
-    let Ok(out) = Command::new("rg").args(args).output() else {
-        return;
+    let eligible = match project_files() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
     };
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
-        let path = PathBuf::from(line);
-        if !line.is_empty() && !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-}
-
-/// Hand-written shell scripts in the tree (by `.sh` extension or a `#!...sh`
-/// shebang), excluding generated output — the shell gate's scan scope.
-fn shell_files() -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = Vec::new();
-    collect_rg(
-        &[
-            "--hidden",
-            "--glob",
-            "!.git/**",
-            "--glob",
-            "!target/**",
-            "--files-with-matches",
-            "-U",
-            r"\A#!.*\bsh\b",
-        ],
-        &mut paths,
-    );
-    collect_rg(
-        &[
-            "--hidden",
-            "--glob",
-            "!.git/**",
-            "--glob",
-            "!target/**",
-            "--files",
-            "--glob",
-            "*.sh",
-        ],
-        &mut paths,
-    );
-    return paths;
-}
-
-/// Lints every shell script with shellcheck at max severity (all optional
-/// checks on). A clean run is silent; findings surface on failure.
-fn run_shellcheck() -> ExitCode {
-    let files = shell_files();
-    if files.is_empty() {
+    let paths: Vec<PathBuf> = eligible
+        .into_iter()
+        .filter(|path| {
+            return path
+                .file_name()
+                .is_some_and(|name| return name == "Cargo.toml");
+        })
+        .collect();
+    if paths.is_empty() {
         return ExitCode::SUCCESS;
     }
-    let mut args: Vec<String> = vec![
-        "--severity=style".into(),
-        "--enable=all".into(),
-        "--external-sources".into(),
-    ];
-    for path in &files {
-        args.push(path.display().to_string());
+    let output = Command::new("cargo-machete").args(paths).output();
+    return match output {
+        Ok(out) if out.status.success() => ExitCode::SUCCESS,
+        Ok(out) => {
+            discard(io::stdout().write_all(&out.stdout));
+            discard(io::stderr().write_all(&out.stderr));
+            ExitCode::FAILURE
+        },
+        Err(_) => ExitCode::FAILURE,
+    };
+}
+
+/// Eligible shell scripts by extension or shell shebang.
+///
+/// # Errors
+/// Returns an error if eligible file enumeration fails.
+fn shell_files() -> io::Result<Vec<PathBuf>> {
+    return files::required(Path::new(".")).map(|paths| {
+        return paths
+            .into_iter()
+            .filter(|path| return is_shell(path))
+            .collect();
+    });
+}
+
+/// Whether a candidate has a shell extension or a shell shebang.
+fn is_shell(path: &Path) -> bool {
+    return path
+        .extension()
+        .is_some_and(|extension| return extension == "sh")
+        || fs::read_to_string(path).is_ok_and(|text| return shell_shebang(&text));
+}
+
+/// Whether the first line names the `sh` interpreter.
+fn shell_shebang(text: &str) -> bool {
+    let Some(line) = text.lines().next() else {
+        return false;
+    };
+    return line.starts_with("#!")
+        && line
+            .split(|character: char| return !character.is_alphanumeric() && character != '_')
+            .any(|word| return word == "sh");
+}
+
+/// Lints shell scripts while allowing sources only from the candidate set.
+///
+/// `ShellCheck` follows sourced files supplied as inputs without `-x`. Supplying
+/// all candidates lets it read extensionless libraries too; only script entry
+/// points contribute standalone findings, so other file types are not linted.
+fn run_shellcheck() -> ExitCode {
+    let candidates = match files::required(Path::new(".")) {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
+    let scripts: BTreeSet<PathBuf> = candidates
+        .iter()
+        .filter(|path| return is_shell(path))
+        .cloned()
+        .collect();
+    if scripts.is_empty() {
+        return ExitCode::SUCCESS;
     }
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd("shellcheck", &refs);
+    return shellcheck_candidates(&candidates, &scripts);
+}
+
+/// Runs `ShellCheck` with every eligible source pathname in its input allowlist.
+fn shellcheck_candidates(candidates: &[PathBuf], scripts: &BTreeSet<PathBuf>) -> ExitCode {
+    let output = match Command::new("shellcheck")
+        .args(["--severity=style", "--enable=all", "--format=json"])
+        .args(candidates)
+        .output()
+    {
+        Ok(result) => result,
+        Err(error) => {
+            emit(&format!("cannot run shellcheck: {error}"));
+            return ExitCode::FAILURE;
+        },
+    };
+    discard(io::stderr().write_all(&output.stderr));
+    if !matches!(output.status.code(), Some(0_i32 | 1_i32)) {
+        return ExitCode::FAILURE;
+    }
+    let findings: Vec<ShellFinding> = match serde_json::from_slice(&output.stdout) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            emit(&format!("cannot read shellcheck findings: {error}"));
+            return ExitCode::FAILURE;
+        },
+    };
+    return report_shell_findings(&findings, scripts);
+}
+
+/// Reports findings for shell entry points, retaining every severity and code.
+fn report_shell_findings(findings: &[ShellFinding], scripts: &BTreeSet<PathBuf>) -> ExitCode {
+    let mut result = ExitCode::SUCCESS;
+    let selected = findings
+        .iter()
+        .filter(|finding| return scripts.contains(Path::new(&finding.file)));
+    for finding in selected {
+        discard(writeln!(
+            io::stderr(),
+            "{}:{}:{}: {}: {} [SC{}]",
+            finding.file,
+            finding.line,
+            finding.column,
+            finding.level,
+            finding.message,
+            finding.code
+        ));
+        result = ExitCode::FAILURE;
+    }
+    return result;
 }
 
 /// Verifies every shell script is shfmt-formatted (shell auto-detected from the
@@ -1027,7 +1198,10 @@ fn run_shfmt_fix() -> ExitCode {
 
 /// Runs shfmt over every shell script with the given mode flag.
 fn run_shfmt(mode: &str) -> ExitCode {
-    let files = shell_files();
+    let files = match shell_files() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
     if files.is_empty() {
         return ExitCode::SUCCESS;
     }
@@ -1046,19 +1220,12 @@ fn run_shfmt(mode: &str) -> ExitCode {
     return cmd("shfmt", &refs);
 }
 
-/// Source files scanned for comments (any hand-written `.rs` under `src/`).
-fn source_files() -> Vec<PathBuf> {
-    let output = Command::new("rg")
-        .args(["--files", "-t", "rust", "src/"])
-        .output();
-    return match output {
-        Ok(out) => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|line| return !line.is_empty())
-            .map(PathBuf::from)
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+/// Source files scanned for comments (eligible `.rs` files under `src/`).
+///
+/// # Errors
+/// Returns an error if eligible source file enumeration fails.
+fn source_files() -> io::Result<Vec<PathBuf>> {
+    return analyze::source_files();
 }
 
 /// Reports any non-survivor `//` comment lines in one file, returning if found.
@@ -1081,7 +1248,11 @@ fn report_comments(path: &Path, content: &str) -> bool {
 /// Checks that no non-survivor `//` comments exist in rust source.
 fn run_no_comments() -> ExitCode {
     let mut found = false;
-    for path in source_files() {
+    let paths = match source_files() {
+        Ok(eligible) => eligible,
+        Err(error) => return enumeration_failure(&error),
+    };
+    for path in paths {
         if let Ok(content) = fs::read_to_string(&path) {
             found |= report_comments(&path, &content);
         }
@@ -1116,7 +1287,11 @@ fn strip_content(content: &str) -> Option<String> {
 
 /// Removes non-survivor `//` comments from rust source files.
 fn run_remove_comments() -> ExitCode {
-    for path in source_files() {
+    let paths = match source_files() {
+        Ok(found) => found,
+        Err(error) => return enumeration_failure(&error),
+    };
+    for path in paths {
         if let Ok(content) = fs::read_to_string(&path)
             && let Some(joined) = strip_content(&content)
         {

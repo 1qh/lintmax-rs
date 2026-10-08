@@ -4,7 +4,14 @@
 //! Actions pins against GitHub releases, warning (advisory, never failing) when
 //! a pin is behind the active-maintenance window.
 
-use std::{env, fs, path::Path, process::Command, thread};
+use std::{
+    env, fs, io,
+    path::{Path, PathBuf},
+    process::Command,
+    thread,
+};
+
+use crate::files::required;
 
 /// Environment flag that disables the scan entirely.
 const ENV_SKIP: &str = "LINTMAX_SKIP_STALENESS";
@@ -275,43 +282,49 @@ fn same_major(left: &str, right: &str) -> bool {
 
 /// Scans every dep source in parallel, returning the merged behind-latest set.
 ///
-/// Returns an empty set when skipped or when no registry is reachable, so the
-/// scan is always advisory and never blocks a clean gate.
+/// Returns an empty set when skipped or when no registry is reachable. Outdated
+/// pins remain advisory; file enumeration failures fail the stage.
+///
+/// # Errors
+/// Returns an error if eligible workflow enumeration fails.
 #[inline]
-#[must_use]
-pub fn scan(root: &Path, generated: &[String]) -> Vec<Issue> {
+pub fn scan(root: &Path, generated: &[String]) -> io::Result<Vec<Issue>> {
     if env::var(ENV_SKIP).is_ok_and(|val| return val == "1") {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+    let paths = match required(root) {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
     let crates_root = root.to_path_buf();
-    let actions_root = root.to_path_buf();
-    let owned: Vec<String> = generated.to_vec();
     let crates_handle = thread::spawn(move || return scan_crates(&crates_root));
-    let actions = scan_actions(&actions_root, &owned);
+    let actions = scan_actions(root, generated, &paths);
     let mut merged = crates_handle.join().unwrap_or_default();
     merged.extend(actions);
-    return merged;
+    return Ok(merged);
 }
 
-/// Checks GitHub Actions `uses:` pins against each action's latest release.
-fn scan_actions(root: &Path, generated: &[String]) -> Vec<Issue> {
+/// Checks eligible GitHub Actions pins against each action's latest release.
+fn scan_actions(root: &Path, generated: &[String], paths: &[PathBuf]) -> Vec<Issue> {
     let dir = root.join(".github").join("workflows");
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return Vec::new();
-    };
+    let directory = fs::canonicalize(&dir).unwrap_or(dir);
     let mut pins: Vec<(String, String)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if is_yaml(&path)
-            && !is_generated(&path, generated)
-            && let Ok(text) = fs::read_to_string(&path)
-        {
-            collect_action_pins(&text, &mut pins);
-        }
+    for path in paths {
+        collect_workflow(path, &directory, generated, &mut pins);
     }
     pins.sort();
     pins.dedup();
     return resolve(pins, |pair| return action_issue(&pair.0, &pair.1));
+}
+
+/// Collects pins from an eligible, non-generated workflow in the workflow directory.
+fn collect_workflow(path: &Path, directory: &Path, generated: &[String], pins: &mut Vec<Pin>) {
+    if path.parent() != Some(directory) || !is_yaml(path) || is_generated(path, generated) {
+        return;
+    }
+    if let Ok(text) = fs::read_to_string(path) {
+        collect_action_pins(&text, pins);
+    }
 }
 
 /// Checks each direct crate dep against its crates.io latest stable version.

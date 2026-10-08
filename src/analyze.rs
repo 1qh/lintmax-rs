@@ -6,7 +6,12 @@
 //! advisory-then-gating findings the standard linters miss.
 
 use alloc::collections::BTreeMap;
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+use crate::files::required;
 
 /// Minimum distinct names sharing a value before it counts as a duplicate.
 const MIN_DUP_NAMES: usize = 2;
@@ -68,11 +73,17 @@ fn binding_name(line: &str, keyword: &str) -> Option<String> {
 }
 
 /// Detects consts in the same file sharing one string value.
+///
+/// # Errors
+/// Returns an error if source file enumeration fails.
 #[inline]
-#[must_use]
-pub fn dupconst() -> Vec<DupConst> {
+pub fn dupconst() -> io::Result<Vec<DupConst>> {
     let mut by_value: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (_, text) in sources() {
+    let texts = match sources() {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
+    for (_, text) in texts {
         collect_consts(&text, &mut by_value);
     }
     let mut out = Vec::new();
@@ -83,7 +94,7 @@ pub fn dupconst() -> Vec<DupConst> {
             out.push(DupConst { names, value });
         }
     }
-    return out;
+    return Ok(out);
 }
 
 /// Records every `const NAME = "value"` pair in one file's text.
@@ -97,14 +108,20 @@ fn collect_consts(text: &str, by_value: &mut BTreeMap<String, Vec<String>>) {
 }
 
 /// Detects unguarded float divisions across source.
+///
+/// # Errors
+/// Returns an error if source file enumeration fails.
 #[inline]
-#[must_use]
-pub fn floatdiv() -> Vec<FloatDiv> {
+pub fn floatdiv() -> io::Result<Vec<FloatDiv>> {
     let mut out = Vec::new();
-    for (file, text) in sources() {
+    let texts = match sources() {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
+    for (file, text) in texts {
         collect_float_divs(&file, &text, &mut out);
     }
-    return out;
+    return Ok(out);
 }
 
 /// Records each risky float-division site in one file's text.
@@ -173,17 +190,23 @@ pub fn format_gibberish(issues: &[Gibberish]) -> String {
 }
 
 /// Detects hash-gibberish binding/function/const identifiers across source.
+///
+/// # Errors
+/// Returns an error if source file enumeration fails.
 #[inline]
-#[must_use]
-pub fn gibberish() -> Vec<Gibberish> {
+pub fn gibberish() -> io::Result<Vec<Gibberish>> {
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
-    for (file, text) in sources() {
+    let texts = match sources() {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
+    for (file, text) in texts {
         collect_gibberish(&file, &text, &mut seen);
     }
-    return seen
+    return Ok(seen
         .into_iter()
         .map(|(name, file)| return Gibberish { file, name })
-        .collect();
+        .collect());
 }
 
 /// Records first-seen gibberish identifiers in one file's text.
@@ -329,31 +352,51 @@ fn risky_float_div(line: &str) -> Option<String> {
 }
 
 /// Hand-written rust source files under `src/` (the gate's scan scope).
+///
+/// # Errors
+/// Returns an error if the root or eligible source paths cannot be read.
 #[inline]
-#[must_use]
-pub fn source_files() -> Vec<PathBuf> {
-    let Ok(output) = Command::new("rg")
-        .args(["--files", "-t", "rust", "src/"])
-        .output()
-    else {
-        return Vec::new();
+pub fn source_files() -> io::Result<Vec<PathBuf>> {
+    let root = match fs::canonicalize(".") {
+        Ok(directory) => directory,
+        Err(error) => return Err(error),
     };
-    return String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| return !line.is_empty())
-        .map(PathBuf::from)
-        .collect();
+    let paths = match required(&root) {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
+    return Ok(paths
+        .into_iter()
+        .filter(|path| return is_source(path, &root))
+        .collect());
+}
+
+/// Whether a candidate is a Rust source file under the scan root's `src/`.
+fn is_source(path: &Path, root: &Path) -> bool {
+    return path
+        .extension()
+        .is_some_and(|extension| return extension == "rs")
+        && path
+            .strip_prefix(root)
+            .is_ok_and(|relative| return relative.starts_with("src"));
 }
 
 /// Reads each source file's `(path, text)`, skipping unreadable entries.
-fn sources() -> Vec<(String, String)> {
+///
+/// # Errors
+/// Returns an error if source file enumeration fails.
+fn sources() -> io::Result<Vec<(String, String)>> {
+    let paths = match source_files() {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
     let mut out = Vec::new();
-    for path in source_files() {
+    for path in paths {
         if let Ok(text) = fs::read_to_string(&path) {
             out.push((path.display().to_string(), text));
         }
     }
-    return out;
+    return Ok(out);
 }
 
 #[cfg(test)]

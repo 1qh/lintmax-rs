@@ -12,6 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::files::required;
+
 /// The group a top-level item belongs to, in the order the lint declares.
 const GROUPS: [(&str, u8); 15] = [
     ("const fn ", 5),
@@ -113,13 +115,21 @@ fn literal_end(chars: &[char], at: usize, quote: char) -> usize {
 }
 
 /// Sorts every rust file under a root: module items, then members.
+///
+/// # Errors
+/// Returns an error if eligible file enumeration fails.
 #[inline]
-pub fn sort_tree(root: &Path) {
-    for path in rust_files(root) {
+pub fn sort_tree(root: &Path) -> io::Result<()> {
+    let paths = match rust_files(root) {
+        Ok(found) => found,
+        Err(error) => return Err(error),
+    };
+    for path in paths {
         let _sorted = sort_file(&path);
         let _members = sort_members(&path);
         report_stranded(&path);
     }
+    return Ok(());
 }
 
 /// Names every member left with no doc comment in one file.
@@ -266,30 +276,21 @@ fn extent(lines: &[String], start: usize) -> usize {
     return lines.len().saturating_sub(1);
 }
 
-/// Every rust file under a root, skipping build output.
-fn rust_files(root: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let Ok(entries) = fs::read_dir(root) else {
-        return found;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let ignored = path.file_name().is_some_and(|name| return name == "target");
-        if path.is_dir() && !ignored {
-            found.extend(rust_files(&path));
-            continue;
-        }
-        if path.is_dir() {
-            continue;
-        }
-        if path
-            .extension()
-            .is_some_and(|extension| return extension == "rs")
-        {
-            found.push(path);
-        }
-    }
-    return found;
+/// Every eligible rust file under a root.
+///
+/// # Errors
+/// Returns an error if eligible file enumeration fails.
+fn rust_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+    return required(root).map(|paths| {
+        return paths
+            .into_iter()
+            .filter(|path| {
+                return path
+                    .extension()
+                    .is_some_and(|extension| return extension == "rs");
+            })
+            .collect();
+    });
 }
 
 /// The lines a sorted file carries, or `None` when the order already ascends.
