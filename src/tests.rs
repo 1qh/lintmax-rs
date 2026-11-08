@@ -150,6 +150,93 @@ fn bare_command_dispatches_exactly_like_fix() {
     return;
 }
 
+/// Library test builds omit the binary lint; binary checks and fixes retain it.
+///
+/// # Panics
+/// On assertion failure.
+#[test]
+fn binary_dead_code_lint_is_scoped_to_binary_passes() {
+    assert!(!super::build_lint_args().iter().any(|lint| {
+        return lint == "dead_code_pub_in_binary";
+    }));
+    for mode in [super::LintMode::Check, super::LintMode::Fix] {
+        binary_pass_arguments(mode);
+        binary_pass_execution(mode);
+    }
+    binary_target_metadata();
+    return;
+}
+
+/// Verifies binary check and autofix arguments without running cargo.
+///
+/// # Panics
+/// On assertion failure.
+fn binary_pass_arguments(mode: super::LintMode) {
+    let arguments = super::binary_lint_args(mode);
+    let mut expected: Vec<String> = ["clippy", "--workspace", "--bins", "--all-features"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if matches!(mode, super::LintMode::Fix) {
+        expected.extend(["--fix".to_owned(), "--allow-dirty".to_owned()]);
+    }
+    expected.extend(["--quiet".to_owned(), "--".to_owned()]);
+    expected.extend(super::build_lint_args());
+    expected.extend(["-F".to_owned(), "dead_code_pub_in_binary".to_owned()]);
+    assert_eq!(arguments, expected);
+    return;
+}
+
+/// Checks the library-only skip and preservation of a binary lint failure.
+///
+/// # Panics
+/// On assertion failure.
+fn binary_pass_execution(mode: super::LintMode) {
+    CALLS.with(|calls| return calls.borrow_mut().clear());
+    assert_eq!(
+        super::run_binary_lint_with(mode, Ok(false), record_install),
+        ExitCode::SUCCESS
+    );
+    CALLS.with(|calls| {
+        assert!(calls.borrow().is_empty());
+        return;
+    });
+    assert_eq!(
+        super::run_binary_lint_with(mode, Ok(true), record_binary_failure),
+        ExitCode::from(23)
+    );
+    let arguments = super::binary_lint_args(mode);
+    CALLS.with(|calls| {
+        assert_eq!(*calls.borrow(), [format!("cargo {}", arguments.join(" "))]);
+        return;
+    });
+    return;
+}
+
+/// Dependency binaries never make a library-only workspace require a binary pass.
+///
+/// # Panics
+/// On assertion failure.
+fn binary_target_metadata() {
+    let library = serde_json::json!({
+        "workspace_members": ["library"],
+        "packages": [
+            {"id": "library", "targets": [{"kind": ["lib"]}]},
+            {"id": "dependency", "targets": [{"kind": ["bin"]}]}
+        ]
+    });
+    assert!(!super::workspace_metadata_has_binary(&library));
+    let binary = serde_json::json!({
+        "workspace_members": ["library", "application"],
+        "packages": [
+            {"id": "library", "targets": [{"kind": ["lib"]}]},
+            {"id": "application", "targets": [{"kind": ["bin"]}]}
+        ]
+    });
+    assert!(super::workspace_metadata_has_binary(&binary));
+    return;
+}
+
 /// Cargo subcommand probes pass their name through cargo before the version flag.
 ///
 /// # Panics
@@ -268,6 +355,29 @@ fn check_version_and_rules_never_dispatch_fix() {
         super::dispatch(Some(&super::Sub::Rules), forbidden_action, forbidden_action),
         ExitCode::SUCCESS
     );
+    return;
+}
+
+/// The allowed-lint tables name exactly the code's exceptions in both directions.
+///
+/// # Panics
+/// On assertion failure.
+#[test]
+fn clippy_allow_tables_match_the_code() {
+    let documentation = include_str!("../CLAUDE.md");
+    let mut documented = Vec::new();
+    for line in documentation
+        .lines()
+        .skip_while(|line| return *line != "### Contradicting clippy lint pairs")
+        .take_while(|line| return !line.starts_with("## "))
+    {
+        if let Some(row) = line.strip_prefix("| `") {
+            let lint = row.split('`').next().unwrap_or_default();
+            documented.push(format!("clippy::{lint}"));
+        }
+    }
+    documented.sort();
+    assert_eq!(documented, super::CLIPPY_ALLOW);
     return;
 }
 
@@ -400,6 +510,12 @@ fn project_and_external_exceptions_merge_every_list() {
     }
     super::discard(fs::remove_dir_all(directory));
     return;
+}
+
+/// Records binary lint arguments and returns a failing clippy status.
+fn record_binary_failure(binary: &str, arguments: &[&str]) -> ExitCode {
+    super::discard(record_install(binary, arguments));
+    return ExitCode::from(23);
 }
 
 /// Records active-toolchain component preparation.
@@ -567,9 +683,11 @@ fn spawn_errors_name_the_tool_and_io_error() {
 /// On assertion failure.
 fn stable_lint_flags_are_forbidden() {
     let arguments = super::build_lint_args();
-    for lint in ["dead_code_pub_in_binary", "raw_borrows_via_references"] {
-        assert!(arguments.windows(2).any(|pair| return pair == ["-F", lint]));
-    }
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| return pair == ["-F", "raw_borrows_via_references"])
+    );
     return;
 }
 

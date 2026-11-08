@@ -97,7 +97,7 @@ Standard library first, then external crates. One `use` per import — no `{A, B
 
 ### Pattern matching on references
 
-`pattern_type_mismatch` and `ref_patterns` conflict. Both are in restriction. `ref_patterns` is allowed. When iterating over `&[(&str, &str)]`, use `for &(key, val)` or just `for (key, val)` — the `pattern_type_mismatch` lint is also allowed so either works.
+`pattern_type_mismatch` is enforced and `ref_patterns` is allowed. When iterating over `&[(&str, &str)]`, use `for &(key, val)` to destructure the reference explicitly.
 
 ### `as` casts forbidden
 
@@ -130,27 +130,29 @@ ExitCode::from(u8::try_from(code).unwrap_or(1))
 
 ### Contradicting clippy lint pairs
 
-These lints are in the restriction group and directly contradict each other. One side must be allowed:
+These allows resolve conflicts with enforced lints or the selected module layout:
 
-| Allowed                            | Kept (enforced)                                              |
-| ---------------------------------- | ------------------------------------------------------------ |
-| `separated_literal_suffix`         | `unseparated_literal_suffix` — write `1i32` not `1_i32`      |
-| `pub_with_shorthand`               | `pub_without_shorthand` — write `pub(crate)` not `pub`       |
-| `self_named_module_files`          | `mod_module_files`                                           |
-| `exhaustive_enums`                 | non-exhaustive checking                                      |
-| `exhaustive_structs`               | non-exhaustive checking                                      |
-| `ref_patterns`                     | `pattern_type_mismatch` (also allowed due to impracticality) |
-| `needless_return`                  | `implicit_return` — explicit returns required                |
-| `blanket_clippy_restriction_lints` | meta-lint about enabling the restriction group               |
+| Allowed                    | Kept (enforced)                                                             |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `separated_literal_suffix` | `unseparated_literal_suffix` — write `1i32` not `1_i32`                     |
+| `pub_with_shorthand`       | `pub_without_shorthand` — write `pub(crate)` not `pub`                      |
+| `self_named_module_files`  | `mod_module_files` — use `mod.rs` for directory modules                     |
+| `redundant_pub_crate`      | `pub_without_shorthand` — retain explicit crate visibility in binary crates |
+| `ref_patterns`             | `pattern_type_mismatch` — permit explicit reference patterns                |
+| `needless_return`          | `implicit_return` — explicit returns required                               |
 
 ### Additionally allowed for practicality
 
-| Allowed                         | Reason                                                               |
-| ------------------------------- | -------------------------------------------------------------------- |
-| `single_call_fn`                | Flags any fn called once — would require inlining all dispatch logic |
-| `semicolon_outside_block`       | Conflicts with `semicolon_if_nothing_returned` on `#[cfg]` blocks    |
-| `semicolon_if_nothing_returned` | Same conflict, opposite direction                                    |
-| `pattern_type_mismatch`         | Requires destructuring references in every `for` loop — too noisy    |
+| Allowed                            | Reason                                                               |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `single_call_fn`                   | Flags any fn called once — would require inlining all dispatch logic |
+| `semicolon_outside_block`          | Conflicts with `semicolon_if_nothing_returned` on `#[cfg]` blocks    |
+| `semicolon_if_nothing_returned`    | Same conflict, opposite direction                                    |
+| `blanket_clippy_restriction_lints` | The gate deliberately enables the entire restriction group           |
+| `float_arithmetic`                 | The floatdiv advisory checks unguarded float division more precisely |
+| `multiple_crate_versions`          | The cargo-deny stage audits duplicates with declared exceptions      |
+
+`exhaustive_enums`, `exhaustive_structs`, and `pattern_type_mismatch` remain enforced. Matching another crate's `#[non_exhaustive]` enum with a `_` arm is accepted by `wildcard_enum_match_arm`, so it does not contradict `exhaustive_enums`.
 
 ## Licence audit scope
 

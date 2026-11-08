@@ -109,7 +109,6 @@ const RUSTC_FORBID: &[&str] = &[
     "absolute_paths_not_starting_with_crate",
     "ambiguous_negative_literals",
     "closure_returning_async_block",
-    "dead_code_pub_in_binary",
     "deprecated_in_future",
     "deprecated_safe_2024",
     "deref_into_dyn_supertrait",
@@ -231,6 +230,15 @@ struct Exceptions {
     generated: Vec<String>,
 }
 
+/// Whether clippy should check or apply fixes.
+#[derive(Clone, Copy)]
+enum LintMode {
+    /// Verify without changing source files.
+    Check,
+    /// Apply compiler suggestions.
+    Fix,
+}
+
 /// Optional prebuilt installation strategy.
 #[derive(Clone, Copy)]
 enum Prebuilt {
@@ -330,6 +338,21 @@ fn advisory(prefix: &str, body: &str) {
         discard(write!(io::stderr(), "advisory: {prefix}{body}"));
     }
     return;
+}
+
+/// Builds a binary-only clippy pass with the shared flags and binary lint.
+fn binary_lint_args(mode: LintMode) -> Vec<String> {
+    let mut arguments: Vec<String> = ["clippy", "--workspace", "--bins", "--all-features"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if matches!(mode, LintMode::Fix) {
+        arguments.extend(["--fix".to_owned(), "--allow-dirty".to_owned()]);
+    }
+    arguments.extend(["--quiet".to_owned(), "--".to_owned()]);
+    arguments.extend(build_lint_args());
+    arguments.extend(["-F".to_owned(), "dead_code_pub_in_binary".to_owned()]);
+    return arguments;
 }
 
 /// Cached availability of the optional prebuilt installer.
@@ -1069,6 +1092,10 @@ fn print_rules() {
         CLIPPY_ALLOW.join(", ")
     ));
     discard(writeln!(out, "rustc forbid: {}", RUSTC_FORBID.join(", ")));
+    discard(writeln!(
+        out,
+        "rustc forbid (binary targets only): dead_code_pub_in_binary"
+    ));
     discard(writeln!(out, "rustc deny: {}", RUSTC_DENY.join(", ")));
     discard(writeln!(
         out,
@@ -1290,6 +1317,27 @@ fn run_advisories() -> ExitCode {
     ]);
 }
 
+/// Runs the binary lint only when workspace metadata contains a binary target.
+fn run_binary_lint(mode: LintMode) -> ExitCode {
+    return run_binary_lint_with(mode, workspace_has_binary(), cmd);
+}
+
+/// Preserves target probe and clippy failures while skipping library-only workspaces.
+fn run_binary_lint_with(
+    mode: LintMode,
+    targets: io::Result<bool>,
+    run: fn(&str, &[&str]) -> ExitCode,
+) -> ExitCode {
+    match targets {
+        Ok(false) => return ExitCode::SUCCESS,
+        Ok(true) => {},
+        Err(error) => return enumeration_failure(&error),
+    }
+    let arguments = binary_lint_args(mode);
+    let references: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    return run("cargo", &references);
+}
+
 /// Runs all checks with temporary configs (no green-cache; used by CI paths).
 fn run_check_all() -> ExitCode {
     let configs = match check_configs() {
@@ -1330,7 +1378,11 @@ fn run_clippy_fix() -> ExitCode {
     ];
     args.extend(build_lint_args());
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd("cargo", &refs);
+    let result = cmd("cargo", &refs);
+    if result != ExitCode::SUCCESS {
+        return result;
+    }
+    return run_binary_lint(LintMode::Fix);
 }
 
 /// Default gate: short-circuits with `ok (cached)` when the working tree is
@@ -1631,7 +1683,11 @@ fn run_lint() -> ExitCode {
     args.extend(build_lint_args());
 
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd("cargo", &refs);
+    let result = cmd("cargo", &refs);
+    if result != ExitCode::SUCCESS {
+        return result;
+    }
+    return run_binary_lint(LintMode::Check);
 }
 
 /// Runs cargo-machete on explicit eligible manifests rather than a directory.
@@ -2020,6 +2076,32 @@ fn vendored_excludes() -> io::Result<Vec<String>> {
         .collect());
 }
 
+/// Whether workspace metadata names any first-party binary target.
+///
+/// # Errors
+/// Returns metadata command, status, or JSON decoding failures.
+fn workspace_has_binary() -> io::Result<bool> {
+    let mut command = tool_command("cargo");
+    discard(command.args(["metadata", "--no-deps", "--format-version", "1"]));
+    if checking() {
+        discard(command.arg("--locked"));
+    }
+    let output = match command.tool_output() {
+        Ok(captured) => captured,
+        Err(error) => return Err(error),
+    };
+    if !output.status.success() {
+        discard(io::stdout().write_all(&output.stdout));
+        discard(io::stderr().write_all(&output.stderr));
+        return Err(io::Error::other(
+            "cargo metadata failed while selecting binary targets",
+        ));
+    }
+    return serde_json::from_slice::<Value>(&output.stdout)
+        .map(|metadata| return workspace_metadata_has_binary(&metadata))
+        .map_err(io::Error::other);
+}
+
 /// Package ids that are workspace (first-party) members.
 fn workspace_member_ids(meta: &Value) -> BTreeSet<String> {
     let mut set = BTreeSet::new();
@@ -2030,6 +2112,27 @@ fn workspace_member_ids(meta: &Value) -> BTreeSet<String> {
         }
     }
     return set;
+}
+
+/// Whether a workspace member declares a binary, excluding dependency targets.
+fn workspace_metadata_has_binary(metadata: &Value) -> bool {
+    let members = workspace_member_ids(metadata);
+    return metadata
+        .get("packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|package| {
+            return package
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|identifier| return members.contains(identifier));
+        })
+        .filter_map(|package| return package.get("targets").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|target| return target.get("kind").and_then(Value::as_array))
+        .flatten()
+        .any(|kind| return kind.as_str() == Some("bin"));
 }
 
 /// Returns the worse of two exit codes.
