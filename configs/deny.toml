@@ -31,7 +31,7 @@ allow = [
 confidence-threshold = 0.93
 
 [licenses.private]
-ignore = false
+ignore = true
 
 [bans]
 multiple-versions = "deny"

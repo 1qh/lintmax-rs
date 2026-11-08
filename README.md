@@ -49,3 +49,13 @@ All configs are embedded in the binary. Your project stays clean — no clippy.t
 - Dependency audit via `cargo deny`
 - Unused dependencies via `cargo machete`
 - Doc warnings denied
+
+## Exceptions
+
+Declare project exceptions in `lintmax-exceptions.toml` at the project root.
+The `advisories`, `duplicates`, and `generated` lists name advisory identifiers,
+`crate@version` duplicates, and generator-owned paths, respectively.
+Set `LINTMAX_EXCEPTIONS` to an absolute path anywhere on disk to load an additional
+exceptions file. When both files exist, all three lists are merged. An unreadable
+or invalid explicitly selected file fails the gate with its path, including when
+the green cache would otherwise match.

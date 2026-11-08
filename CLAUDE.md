@@ -152,18 +152,22 @@ These lints are in the restriction group and directly contradict each other. One
 | `semicolon_if_nothing_returned` | Same conflict, opposite direction                                    |
 | `pattern_type_mismatch`         | Requires destructuring references in every `for` loop — too noisy    |
 
+## Licence audit scope
+
+`cargo deny` audits the licence of every dependency against the allow list. A workspace crate that is never published (`publish = false`) is skipped (`[licenses.private] ignore = true`): its licence decides nothing about what the project may ship, and a private company crate has no allow-listed licence it could truthfully declare.
+
 ## Nightly/unstable lints excluded
 
 These rustc lints exist but are nightly-only and will error on stable with "unknown lint":
 
-- `fuzzy_provenance_casts`
-- `lossy_provenance_casts`
+- `deprecated_llvm_intrinsic`
+- `implicit_provenance_casts`
 - `multiple_supertrait_upcastable`
 - `must_not_suspend`
 - `non_exhaustive_omitted_patterns`
+- `resolving_to_items_shadowing_supertrait_items`
 - `shadowing_supertrait_items`
 - `unqualified_local_imports`
-- `resolving_to_items_shadowing_supertrait_items`
 
 Also excluded: `linker_messages` (fires on Homebrew toolchain noise, not code issues).
 
