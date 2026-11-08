@@ -59,6 +59,65 @@ fn a_declared_generated_path_reaches_the_formatter_excludes() {
     return;
 }
 
+/// Both spelling modes receive every generated path without dropping base exclusions.
+///
+/// # Panics
+/// On assertion or fixture failure.
+#[test]
+fn a_declared_generated_path_reaches_the_spelling_excludes() {
+    spelling_arguments_keep_exclusions();
+    let declared = spelling_exceptions();
+    let merged = super::merge_typos_exceptions(super::TYPOS_TOML, &declared);
+    let parsed: toml::Table = require_success(toml::from_str(&merged).map_err(io::Error::other));
+    let excluded = parsed
+        .get("files")
+        .and_then(|files| return files.get("extend-exclude"))
+        .and_then(toml::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for path in [
+        "target/",
+        "Cargo.lock",
+        "frozen/root.jsonl",
+        "frozen/quoted\"\\.json",
+    ] {
+        assert!(excluded.contains(&toml::Value::String(path.to_owned())));
+    }
+    assert_eq!(
+        super::merge_typos_exceptions(super::TYPOS_TOML, &super::Exceptions::default()),
+        super::TYPOS_TOML
+    );
+    return;
+}
+
+/// Merged vocabulary is an identity mapping and leaves all spelling checks enabled.
+///
+/// # Panics
+/// On assertion or fixture failure.
+#[test]
+fn a_declared_word_reaches_the_spelling_vocabulary() {
+    let declared = spelling_exceptions();
+    let merged = super::merge_typos_exceptions(super::TYPOS_TOML, &declared);
+    let parsed: toml::Table = require_success(toml::from_str(&merged).map_err(io::Error::other));
+    let defaults = parsed.get("default");
+    let words = defaults.and_then(|table| return table.get("extend-words"));
+    for word in ["nguyen", "retrieve", "quoted\"\\word"] {
+        assert_eq!(
+            words
+                .and_then(|table| return table.get(word))
+                .and_then(toml::Value::as_str),
+            Some(word)
+        );
+    }
+    assert!(
+        words
+            .and_then(|table| return table.get("misspelled"))
+            .is_none()
+    );
+    assert!(spelling_checks_enabled(&parsed));
+    return;
+}
+
 /// # Panics
 /// On assertion failure.
 #[test]
@@ -109,6 +168,7 @@ fn an_undeclared_advisory_is_still_caught() {
         generated: Vec::new(),
         advisories: vec!["RUSTSEC-2026-0192".to_owned()],
         duplicates: vec![],
+        words: Vec::new(),
     };
     let merged = super::merge_exceptions(super::DENY_TOML, &declared);
     assert!(
@@ -452,6 +512,7 @@ fn merged_sample() -> String {
         generated: Vec::new(),
         advisories: vec!["RUSTSEC-2026-0192".to_owned()],
         duplicates: vec!["ttf-parser@0.25.1".to_owned()],
+        words: Vec::new(),
     };
     return super::merge_exceptions(super::DENY_TOML, &declared);
 }
@@ -484,7 +545,7 @@ fn normalize_strips_plugin_version() {
     return;
 }
 
-/// Both exception sources contribute all three lists.
+/// Both exception sources contribute all four lists.
 ///
 /// # Panics
 /// On assertion failure.
@@ -495,18 +556,20 @@ fn project_and_external_exceptions_merge_every_list() {
     let external = directory.join("external.toml");
     require_success(fs::write(
         &root,
-        "advisories = [\"ROOT\"]\nduplicates = [\"root@1\"]\ngenerated = [\"root.rs\"]\n",
+        "advisories = [\"ROOT\"]\nduplicates = [\"root@1\"]\ngenerated = [\"root.rs\"]\nwords = \
+         [\"nguyen\"]\n",
     ));
     require_success(fs::write(
         &external,
         "advisories = [\"EXTERNAL\"]\nduplicates = [\"external@2\"]\ngenerated = \
-         [\"external.rs\"]\n",
+         [\"external.rs\"]\nwords = [\"retrieve\"]\n",
     ));
     let declared = require_success(super::read_exceptions(&root, Some(&external)));
     {
         assert_eq!(declared.advisories, ["ROOT", "EXTERNAL"]);
         assert_eq!(declared.duplicates, ["root@1", "external@2"]);
         assert_eq!(declared.generated, ["root.rs", "external.rs"]);
+        assert_eq!(declared.words, ["nguyen", "retrieve"]);
     }
     super::discard(fs::remove_dir_all(directory));
     return;
@@ -675,6 +738,55 @@ fn spawn_errors_name_the_tool_and_io_error() {
         ExitCode::FAILURE
     );
     return;
+}
+
+/// Both spelling modes keep their original arguments and enforce file exclusions.
+///
+/// # Panics
+/// On assertion failure.
+fn spelling_arguments_keep_exclusions() {
+    for extra in [&[][..], &["-w"][..]] {
+        let command = super::typos_command(extra, &[PathBuf::from("frozen/root.jsonl")]);
+        let mut expected: Vec<&OsStr> = extra.iter().map(OsStr::new).collect();
+        expected.extend([
+            OsStr::new("--force-exclude"),
+            OsStr::new("frozen/root.jsonl"),
+        ]);
+        assert_eq!(command.get_args().collect::<Vec<_>>(), expected);
+    }
+    return;
+}
+
+/// Whether both content and filename spelling checks remain enabled.
+fn spelling_checks_enabled(parsed: &toml::Table) -> bool {
+    return ["check-file", "check-filename"].iter().all(|key| {
+        return parsed
+            .get("default")
+            .and_then(|table| return table.get(*key))
+            .and_then(toml::Value::as_bool)
+            == Some(true);
+    });
+}
+
+/// Reads spelling exceptions from both sources without changing process environment.
+///
+/// # Panics
+/// On fixture failure.
+fn spelling_exceptions() -> super::Exceptions {
+    let directory = test_directory("spelling");
+    let root = directory.join("root.toml");
+    let external = directory.join("external.toml");
+    require_success(fs::write(
+        &root,
+        "generated = ['frozen/root.jsonl']\nwords = ['nguyen', 'quoted\"\\word']\n",
+    ));
+    require_success(fs::write(
+        &external,
+        "generated = ['frozen/quoted\"\\.json']\nwords = ['retrieve', 'nguyen']\n",
+    ));
+    let declared = require_success(super::read_exceptions(&root, Some(&external)));
+    super::discard(fs::remove_dir_all(directory));
+    return declared;
 }
 
 /// Checks the compiler arguments for each newly stable lint.

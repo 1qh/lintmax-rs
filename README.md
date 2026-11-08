@@ -55,7 +55,10 @@ All configs are embedded in the binary. Your project stays clean — no clippy.t
 Declare project exceptions in `lintmax-exceptions.toml` at the project root.
 The `advisories`, `duplicates`, and `generated` lists name advisory identifiers,
 `crate@version` duplicates, and generator-owned paths, respectively.
+Generated paths are excluded from dprint, typos (check and fix), and the staleness scan.
+The `words` list declares project vocabulary: each word is accepted unchanged by
+typos through `extend-words`, while every other word is still checked.
 Set `LINTMAX_EXCEPTIONS` to an absolute path anywhere on disk to load an additional
-exceptions file. When both files exist, all three lists are merged. An unreadable
+exceptions file. When both files exist, all four lists are merged. An unreadable
 or invalid explicitly selected file fails the gate with its path, including when
 the green cache would otherwise match.

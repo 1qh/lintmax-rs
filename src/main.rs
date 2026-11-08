@@ -228,6 +228,9 @@ struct Exceptions {
     /// here and never by relaxing a check.
     #[serde(default)]
     generated: Vec<String>,
+    /// Project vocabulary that the spelling checker must accept unchanged.
+    #[serde(default)]
+    words: Vec<String>,
 }
 
 /// Whether clippy should check or apply fixes.
@@ -460,6 +463,7 @@ fn check_content(name: &str, content: &str) -> String {
     return match name {
         "deny.toml" => deny_with_exceptions(content),
         "dprint.json" => dprint_with_generated(content),
+        "typos.toml" => typos_with_exceptions(content),
         _ => content.to_owned(),
     };
 }
@@ -477,6 +481,7 @@ fn clean_configs() {
         let owned = is_lintmax_content(&path, content)
             || (name == "deny.toml" && is_lintmax_content(&path, &deny_with_exceptions(content)))
             || (name == "dprint.json" && is_bumped_dprint(&path, content))
+            || (name == "typos.toml" && is_lintmax_content(&path, &typos_with_exceptions(content)))
             || (name == "rustfmt.toml" && is_lintmax_rustfmt(&path));
         if owned {
             discard(fs::remove_file(path));
@@ -991,6 +996,32 @@ fn merge_exceptions(content: &str, declared: &Exceptions) -> String {
     );
 }
 
+/// Extends spelling exclusions and vocabulary while preserving the embedded checks.
+fn merge_typos_exceptions(content: &str, declared: &Exceptions) -> String {
+    let excluded = declared
+        .generated
+        .iter()
+        .map(|path| return format!("{}, ", toml::Value::String(path.clone())))
+        .collect::<String>();
+    let mut merged = content.replacen(
+        "extend-exclude = [",
+        &format!("extend-exclude = [{excluded}"),
+        1,
+    );
+    if !declared.words.is_empty() {
+        merged.push_str("\n[default.extend-words]\n");
+        let unique: BTreeSet<&String> = declared.words.iter().collect();
+        for word in unique {
+            let quoted = toml::Value::String(word.clone()).to_string();
+            merged.push_str(&quoted);
+            merged.push_str(" = ");
+            merged.push_str(&quoted);
+            merged.push('\n');
+        }
+    }
+    return merged;
+}
+
 /// Resolves the nightly rustfmt binary path used for strict (nightly-only) options.
 fn nightly_rustfmt() -> Option<String> {
     let Ok(out) = tool_command("rustup")
@@ -1194,6 +1225,7 @@ fn read_exceptions(root: &Path, external: Option<&Path>) -> io::Result<Exception
         merged.advisories.extend(parsed.advisories);
         merged.duplicates.extend(parsed.duplicates);
         merged.generated.extend(parsed.generated);
+        merged.words.extend(parsed.words);
     }
     return Ok(merged);
 }
@@ -1880,12 +1912,7 @@ fn run_typos_excluded(extra: &[&str]) -> ExitCode {
     if paths.is_empty() {
         return ExitCode::SUCCESS;
     }
-    let mut command = tool_command("typos");
-    discard(command.args(extra).args(paths));
-    if checking() {
-        discard(command.arg("--config").arg(config_path("typos.toml")));
-    }
-    let status = command.tool_status();
+    let status = typos_command(extra, &paths).tool_status();
     return if status.is_ok_and(|completed| return completed.success()) {
         ExitCode::SUCCESS
     } else {
@@ -2043,6 +2070,21 @@ fn tool_command(binary: &str) -> Command {
     return Command::new(resolve_tool(binary).unwrap_or_else(|| return PathBuf::from(binary)));
 }
 
+/// Builds spelling commands that honor exclusions even for explicit filenames.
+fn typos_command(extra: &[&str], paths: &[PathBuf]) -> Command {
+    let mut command = tool_command("typos");
+    discard(command.args(extra).arg("--force-exclude").args(paths));
+    if checking() {
+        discard(command.arg("--config").arg(config_path("typos.toml")));
+    }
+    return command;
+}
+
+/// Folds both exception sources into the temporary spelling configuration.
+fn typos_with_exceptions(content: &str) -> String {
+    return merge_typos_exceptions(content, &project_exceptions());
+}
+
 /// Exclude globs for vendored external packages (local non-workspace crates).
 ///
 /// Like registry dependencies, vendored crates are compiled but not linted;
@@ -2179,8 +2221,8 @@ fn write_config(name: &str, content: &str) {
 /// the embedded version pins are only a bootstrap seed, never a stale lock.
 fn write_configs() {
     for &(name, content) in MANAGED_CONFIGS {
-        if name == "dprint.json" {
-            write_config(name, &dprint_with_generated(content));
+        if matches!(name, "dprint.json" | "typos.toml") {
+            write_config(name, &check_content(name, content));
         } else {
             write_config(name, content);
         }
