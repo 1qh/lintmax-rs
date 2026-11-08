@@ -191,13 +191,12 @@ fn a_lifetime_is_never_read_as_a_character_literal() {
 /// On assertion failure.
 #[test]
 fn a_member_whose_signature_spans_lines_still_sorts() {
-    let path =
-        fixture(
-            "wrapped-signature",
-            "impl Held {\n    /// Doc.\n    fn zulu(&self) -> usize {\n        return 0;\n    \
+    let path = fixture(
+        "wrapped-signature",
+        "impl Held {\n    /// Doc.\n    fn zulu(&self) -> usize {\n        return 0;\n    \
              }\n\n    /// Doc.\n    const fn alpha<'held>(\n        &self,\n        value: &'held \
              str,\n    ) -> &'held str {\n        return value;\n    }\n}\n",
-        );
+    );
     assert!(
         super::sort_members(&path),
         "a signature wrapped across lines is still a member the sort can move"
@@ -247,13 +246,12 @@ fn a_block_holding_a_line_no_member_owns_is_left_alone() {
 /// On assertion failure.
 #[test]
 fn an_argument_comma_never_ends_a_member_early() {
-    let path =
-        fixture(
-            "wrapped-arguments",
-            "impl Held {\n    /// Doc.\n    fn zulu(\n        &self,\n        value: usize,\n    \
+    let path = fixture(
+        "wrapped-arguments",
+        "impl Held {\n    /// Doc.\n    fn zulu(\n        &self,\n        value: usize,\n    \
              ) -> usize {\n        return value;\n    }\n\n    /// Doc.\n    fn alpha(&self) -> \
              usize {\n        return 1;\n    }\n}\n",
-        );
+    );
     assert!(
         super::sort_members(&path),
         "a member whose arguments wrap is one member, so the block still tiles"

@@ -154,6 +154,10 @@ These allows resolve conflicts with enforced lints or the selected module layout
 
 `exhaustive_enums`, `exhaustive_structs`, and `pattern_type_mismatch` remain enforced. Matching another crate's `#[non_exhaustive]` enum with a `_` arm is accepted by `wildcard_enum_match_arm`, so it does not contradict `exhaustive_enums`.
 
+## Formatter options excluded for correctness
+
+`format_strings` stays `false`. It is an unstable rustfmt option that rewrites string literals, and upstream documents that it can change what a literal says or produce invalid code: rust-lang/rustfmt #5138 (breaks after a backslash, invalid output), #4471 (a line break beside an escape changes the meaning), #4608 (trailing spaces removed from a literal over `max_width`). A consumer measured the first: a `\"`-escaped JSON literal split into code that no longer compiled. A formatter must preserve meaning, so a long literal stays a width finding for the author to split by hand. Revisit when those issues close.
+
 ## Licence audit scope
 
 `cargo deny` audits the licence of every dependency against the allow list. A workspace crate that is never published (`publish = false`) is skipped (`[licenses.private] ignore = true`): its licence decides nothing about what the project may ship, and a private company crate has no allow-listed licence it could truthfully declare.
