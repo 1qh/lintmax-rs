@@ -485,6 +485,80 @@ fn forbidden_action() -> ExitCode {
     return ExitCode::FAILURE;
 }
 
+/// Both modes omit generated globs and exact paths from formatter and spelling argv.
+///
+/// # Panics
+/// On assertion or fixture failure.
+#[test]
+fn generated_files_never_reach_explicit_tool_arguments() {
+    let root = test_directory("generated-arguments");
+    let config = root.join("isolated-configs");
+    let declared = super::Exceptions {
+        generated: vec!["frozen/**".to_owned(), "record.json".to_owned()],
+        ..super::Exceptions::default()
+    };
+    for checking in [true, false] {
+        super::discard(super::CHECK_CONFIGS.with(|directory| {
+            return directory.replace(checking.then(|| return config.clone()));
+        }));
+        let paths = [
+            "frozen/root.json",
+            "frozen/nested/data.json",
+            "record.json",
+            "record.json.extra",
+            "sibling.json",
+        ]
+        .map(|relative| return root.join(relative));
+        let eligible = super::filter_project_files(&root, paths.to_vec(), &[], &declared.generated);
+        let expected = [root.join("record.json.extra"), root.join("sibling.json")];
+        assert_eq!(eligible, expected);
+        let patterns = require_success(super::dprint_patterns(&eligible));
+        let action = if checking { "check" } else { "fmt" };
+        let formatter = super::dprint_command(action, &patterns);
+        let mut formatter_args = vec![OsStr::new(action)];
+        formatter_args.extend(expected.iter().map(|path| return path.as_os_str()));
+        let formatter_config = config.join("dprint.json");
+        if checking {
+            formatter_args.extend([OsStr::new("--config"), formatter_config.as_os_str()]);
+        }
+        assert_eq!(formatter.get_args().collect::<Vec<_>>(), formatter_args);
+        let extra: &[&str] = if checking { &[] } else { &["-w"] };
+        let spelling = super::typos_command(extra, &eligible);
+        let mut spelling_args: Vec<&OsStr> = extra.iter().map(OsStr::new).collect();
+        spelling_args.push(OsStr::new("--force-exclude"));
+        spelling_args.extend(expected.iter().map(|path| return path.as_os_str()));
+        let spelling_config = config.join("typos.toml");
+        if checking {
+            spelling_args.extend([OsStr::new("--config"), spelling_config.as_os_str()]);
+        }
+        assert_eq!(spelling.get_args().collect::<Vec<_>>(), spelling_args);
+        super::discard(super::CHECK_CONFIGS.with(|directory| return directory.replace(None)));
+    }
+    super::discard(fs::remove_dir_all(root));
+    return;
+}
+
+/// Generated wildcards respect directory boundaries and exact plain paths.
+///
+/// # Panics
+/// On assertion failure.
+#[test]
+fn generated_globs_match_root_relative_paths() {
+    for (pattern, path, expected) in [
+        ("frozen/**", "frozen/deep/data.json", true),
+        ("frozen/**", "other/frozen/data.json", false),
+        ("frozen/*", "frozen/deep/data.json", false),
+        ("**/record.json", "record.json", true),
+        ("**/record.json", "deep/record.json", true),
+        ("./record.json", "record.json", true),
+        ("record.json", "record.json.extra", false),
+        ("record.json", "deep/record.json", false),
+    ] {
+        assert_eq!(super::generated_glob_matches(pattern, path), expected);
+    }
+    return;
+}
+
 /// The machete command retains the bare binary argv convention.
 ///
 /// # Panics

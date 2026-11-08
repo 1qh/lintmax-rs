@@ -13,6 +13,7 @@ pub mod state;
 use alloc::collections::BTreeSet;
 use core::{
     cell::RefCell,
+    iter,
     sync::atomic::{AtomicU64, Ordering},
 };
 use std::{
@@ -625,6 +626,16 @@ fn do_refresh() {
     return;
 }
 
+/// Builds a formatter command while preserving its explicit file arguments.
+fn dprint_command(action: &str, patterns: &[String]) -> Command {
+    let mut command = tool_command("dprint");
+    discard(command.arg(action).args(patterns));
+    if checking() {
+        discard(command.arg("--config").arg(config_path("dprint.json")));
+    }
+    return command;
+}
+
 /// Converts eligible filenames into literal dprint glob arguments.
 ///
 /// # Errors
@@ -823,6 +834,29 @@ fn executable(path: &Path) -> bool {
     }
 }
 
+/// Removes vendored and generated paths before any explicit-file stage.
+fn filter_project_files(
+    root: &Path,
+    paths: Vec<PathBuf>,
+    excludes: &[PathBuf],
+    generated: &[String],
+) -> Vec<PathBuf> {
+    return paths
+        .into_iter()
+        .filter(|path| {
+            let owned = path.strip_prefix(root).ok().and_then(Path::to_str);
+            return !excludes
+                .iter()
+                .any(|exclude| return path.starts_with(exclude))
+                && !owned.is_some_and(|relative| {
+                    return generated
+                        .iter()
+                        .any(|pattern| return generated_glob_matches(pattern, relative));
+                });
+        })
+        .collect();
+}
+
 /// Prints success after the requested fix completes.
 fn finish_fix(fix: fn() -> ExitCode) -> ExitCode {
     let result = fix();
@@ -850,6 +884,40 @@ fn first_party_direct_deps() -> io::Result<BTreeSet<String>> {
     return Ok(serde_json::from_slice::<Value>(&out.stdout)
         .map(|meta| return collect_dep_names(&meta))
         .unwrap_or_default());
+}
+
+/// Matches root-relative generated globs, with recursive directory wildcards.
+fn generated_glob_matches(declared: &str, path: &str) -> bool {
+    let pattern = declared.strip_prefix("./").unwrap_or(declared);
+    let Some(character) = pattern.chars().next() else {
+        return path.is_empty();
+    };
+    let remaining = pattern.get(character.len_utf8()..).unwrap_or_default();
+    if character == '*' {
+        let recursive = remaining.starts_with('*');
+        let suffix = remaining.strip_prefix('*').unwrap_or(remaining);
+        if recursive
+            && let Some(after_directory) = suffix.strip_prefix('/')
+            && generated_glob_matches(after_directory, path)
+        {
+            return true;
+        }
+        return path
+            .char_indices()
+            .map(|(offset, _)| return offset)
+            .chain(iter::once(path.len()))
+            .take_while(|offset| {
+                return recursive || !path.get(..*offset).unwrap_or_default().contains('/');
+            })
+            .any(|offset| {
+                return generated_glob_matches(suffix, path.get(offset..).unwrap_or_default());
+            });
+    }
+    let Some(first) = path.chars().next() else {
+        return false;
+    };
+    return (character == first || (character == '?' && first != '/'))
+        && generated_glob_matches(remaining, path.get(first.len_utf8()..).unwrap_or_default());
 }
 
 /// Whether the gate runs under CI (where the green-cache is bypassed so a fresh
@@ -1150,7 +1218,7 @@ fn project_exceptions() -> Exceptions {
     });
 }
 
-/// Eligible project files, excluding vendored external package directories.
+/// Eligible project files, excluding vendored directories and generated globs.
 ///
 /// # Errors
 /// Returns an error if the root or eligible file paths cannot be read.
@@ -1171,14 +1239,16 @@ fn project_files() -> io::Result<Vec<PathBuf>> {
         .iter()
         .map(|glob| return root.join(glob.strip_suffix("**").unwrap_or(glob)))
         .collect();
-    return Ok(paths
-        .into_iter()
-        .filter(|path| {
-            return !excludes
-                .iter()
-                .any(|exclude| return path.starts_with(exclude));
-        })
-        .collect());
+    let declared = match load_project_exceptions() {
+        Ok(exceptions) => exceptions,
+        Err(error) => return Err(error),
+    };
+    return Ok(filter_project_files(
+        &root,
+        paths,
+        &excludes,
+        &declared.generated,
+    ));
 }
 
 /// Reads one exception source with path-bearing diagnostics.
@@ -1542,12 +1612,7 @@ fn run_dprint(action: &str) -> ExitCode {
             return ExitCode::FAILURE;
         },
     };
-    let mut command = tool_command("dprint");
-    discard(command.arg(action).args(patterns));
-    if checking() {
-        discard(command.arg("--config").arg(config_path("dprint.json")));
-    }
-    let status = command.tool_status();
+    let status = dprint_command(action, &patterns).tool_status();
     return if status.is_ok_and(|completed| return completed.success()) {
         ExitCode::SUCCESS
     } else {
