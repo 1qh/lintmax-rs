@@ -39,6 +39,7 @@ thread_local! {
 #[rustfmt::skip]
 const CLIPPY_ALLOW: &[&str] = &[
     "clippy::blanket_clippy_restriction_lints",
+    "clippy::cognitive_complexity",
     "clippy::float_arithmetic",
     "clippy::multiple_crate_versions",
     "clippy::needless_return",
