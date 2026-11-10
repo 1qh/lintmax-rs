@@ -6,7 +6,7 @@ use super::{sort_file, tokens};
 fn fixture(name: &str, body: &str) -> PathBuf {
     let path = env::temp_dir().join(format!("lintmax-reorder-{}-{name}.rs", process::id()));
     drop(fs::write(&path, body));
-    return path;
+    path
 }
 
 /// # Panics
@@ -327,7 +327,7 @@ fn a_trait_implementations_members_are_never_reported() {
     let named: Vec<String> = lines
         .iter()
         .enumerate()
-        .filter_map(|(at, _)| return super::undocumented_member(&lines, at))
+        .filter_map(|(at, _)| super::undocumented_member(&lines, at))
         .collect();
     assert!(
         named.contains(&"zulu".to_owned()),

@@ -57,16 +57,16 @@ impl State {
 
 /// Unix seconds now, zero when the clock is unreadable.
 fn now_secs() -> u64 {
-    return SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |dur| return dur.as_secs());
+        .map_or(0, |dur| dur.as_secs())
 }
 
 /// Whether the toolchain-refresh window has elapsed since the last refresh.
 #[inline]
 #[must_use]
 pub fn refresh_due() -> bool {
-    return now_secs().saturating_sub(load().last_check) >= REFRESH_WINDOW;
+    now_secs().saturating_sub(load().last_check) >= REFRESH_WINDOW
 }
 
 /// Records the current time as the last toolchain refresh.
@@ -81,9 +81,9 @@ pub fn mark_refreshed() {
 #[inline]
 #[must_use]
 pub fn cwd_key() -> Option<String> {
-    return env::current_dir()
+    env::current_dir()
         .ok()
-        .map(|path| return path.display().to_string());
+        .map(|path| path.display().to_string())
 }
 
 /// OS user cache directory, honoring `XDG_CACHE_HOME` then a macOS
@@ -94,9 +94,7 @@ fn dirs_cache() -> Option<PathBuf> {
     {
         return Some(PathBuf::from(xdg));
     }
-    let Some(home) = env::var("HOME").ok().filter(|val| return !val.is_empty()) else {
-        return None;
-    };
+    let home = env::var("HOME").ok().filter(|val| !val.is_empty())?;
     let mut base = PathBuf::from(home);
     if cfg!(target_os = "macos") {
         base.push("Library");
@@ -104,7 +102,7 @@ fn dirs_cache() -> Option<PathBuf> {
     } else {
         base.push(".cache");
     }
-    return Some(base);
+    Some(base)
 }
 
 /// FNV-1a 64-bit digest — a dependency-free content hash sufficient for
@@ -115,7 +113,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(FNV_PRIME);
     }
-    return hash;
+    hash
 }
 
 /// Formats a 64-bit value as a fixed 16-char lowercase hex string.
@@ -132,7 +130,7 @@ fn hex16(value: u64) -> String {
             out.push(char::from(byte));
         }
     }
-    return out;
+    out
 }
 
 /// Loads persisted state, returning the default when absent or unreadable so a
@@ -146,17 +144,12 @@ pub fn load() -> State {
     let Ok(raw) = fs::read_to_string(path) else {
         return State::default();
     };
-    return serde_json::from_str(&raw).unwrap_or_default();
+    serde_json::from_str(&raw).unwrap_or_default()
 }
 
 /// Path to the persisted state file, when a cache directory is resolvable.
 fn state_path() -> Option<PathBuf> {
-    let Some(mut dir) = dirs_cache() else {
-        return None;
-    };
-    dir.push(APP_DIR);
-    dir.push(FILE_NAME);
-    return Some(dir);
+    Some(dirs_cache()?.join(APP_DIR).join(FILE_NAME))
 }
 
 /// Hashes every eligible working-tree path and its content plus the version.
@@ -165,21 +158,18 @@ fn state_path() -> Option<PathBuf> {
 /// Returns an error if eligible file enumeration fails.
 #[inline]
 pub fn tree_hash(version: &str) -> io::Result<String> {
-    let paths = match required(Path::new(".")) {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let paths = required(Path::new("."))?;
     let mut acc = String::from("lintmax-rs:");
     acc.push_str(version);
     acc.push('\n');
     for file in paths {
-        let digest = fs::read(&file).map_or(0, |body| return fnv1a(&body));
+        let digest = fs::read(&file).map_or(0, |body| fnv1a(&body));
         acc.push_str(&hex16(fnv1a(file.as_os_str().as_encoded_bytes())));
         acc.push(':');
         acc.push_str(&hex16(digest));
         acc.push('\n');
     }
-    return Ok(hex16(fnv1a(acc.as_bytes())));
+    Ok(hex16(fnv1a(acc.as_bytes())))
 }
 
 #[cfg(test)]

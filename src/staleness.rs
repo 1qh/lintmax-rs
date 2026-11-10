@@ -41,21 +41,17 @@ pub struct Issue {
 /// Produces an issue when an action's pinned major lags its latest release tag.
 fn action_issue(action: &str, have: &str) -> Option<Issue> {
     let url = format!("https://api.github.com/repos/{action}/releases/latest");
-    let Some(body) = fetch(&url) else {
-        return None;
-    };
-    let Some(latest) = json_string_field(&body, "tag_name") else {
-        return None;
-    };
+    let body = fetch(&url)?;
+    let latest = json_string_field(&body, "tag_name")?;
     if same_major(have, &latest) {
         return None;
     }
-    return Some(Issue {
+    Some(Issue {
         have: have.to_owned(),
         latest,
         name: action.to_owned(),
         source: "action".to_owned(),
-    });
+    })
 }
 
 /// Reads the `[dependencies]` table from `Cargo.toml` as name/version pairs.
@@ -75,7 +71,7 @@ fn cargo_deps(root: &Path) -> Vec<(String, String)> {
             deps.push(pair);
         }
     }
-    return deps;
+    deps
 }
 
 /// Extracts `owner/repo@vN` action pins from a workflow body.
@@ -89,12 +85,8 @@ fn collect_action_pins(text: &str, out: &mut Vec<(String, String)>) {
 
 /// Parses one workflow line into an `(owner/repo, version)` pin, when present.
 fn action_pin(line: &str) -> Option<(String, String)> {
-    let Some((_, after)) = line.split_once("uses:") else {
-        return None;
-    };
-    let Some((raw_action, raw_version)) = after.trim().split_once('@') else {
-        return None;
-    };
+    let (_, after) = line.split_once("uses:")?;
+    let (raw_action, raw_version) = after.trim().split_once('@')?;
     let action = raw_action.trim();
     if action.starts_with("./") || !action.contains('/') {
         return None;
@@ -104,27 +96,23 @@ fn action_pin(line: &str) -> Option<(String, String)> {
         return None;
     }
     let repo = action.split('/').take(2).collect::<Vec<_>>().join("/");
-    return Some((repo, version.to_owned()));
+    Some((repo, version.to_owned()))
 }
 
 /// Produces an issue when a crate's pinned major lags the crates.io latest.
 fn crate_issue(name: &str, have: &str) -> Option<Issue> {
     let url = format!("https://crates.io/api/v1/crates/{name}");
-    let Some(body) = fetch(&url) else {
-        return None;
-    };
-    let Some(latest) = json_string_field(&body, "max_stable_version") else {
-        return None;
-    };
+    let body = fetch(&url)?;
+    let latest = json_string_field(&body, "max_stable_version")?;
     if same_major(have, &latest) {
         return None;
     }
-    return Some(Issue {
+    Some(Issue {
         have: have.to_owned(),
         latest,
         name: name.to_owned(),
         source: "crate".to_owned(),
-    });
+    })
 }
 
 /// Fetches the body of a URL via curl with the required User-Agent.
@@ -138,7 +126,7 @@ fn fetch(url: &str) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    return String::from_utf8(output.stdout).ok();
+    String::from_utf8(output.stdout).ok()
 }
 
 /// Renders the behind-latest set as an advisory block, empty when nothing lags.
@@ -160,17 +148,17 @@ pub fn format(issues: &[Issue]) -> String {
         out.push_str(&issue.latest);
         out.push('\n');
     }
-    return out;
+    out
 }
 
 /// Whether a pin is a numeric version (`v6`, `1.2.3`) rather than a branch or
 /// channel name (`stable`, `latest`, `main`) the registry cannot compare.
 fn is_versionish(version: &str) -> bool {
-    return version
+    version
         .trim_start_matches('v')
         .chars()
         .next()
-        .is_some_and(|ch| return ch.is_ascii_digit());
+        .is_some_and(|ch| ch.is_ascii_digit())
 }
 
 /// Whether a workflow is one a GENERATOR owns rather than this project.
@@ -182,45 +170,36 @@ fn is_versionish(version: &str) -> bool {
 /// absolute path the scan walks.
 fn is_generated(path: &Path, generated: &[String]) -> bool {
     let text = path.to_string_lossy().replace('\\', "/");
-    return generated
+    generated
         .iter()
-        .any(|owned| return text.ends_with(owned.trim_start_matches("./")));
+        .any(|owned| text.ends_with(owned.trim_start_matches("./")))
 }
 
 /// Whether a path is a YAML workflow file.
 fn is_yaml(path: &Path) -> bool {
-    return path
-        .extension()
-        .and_then(|ext| return ext.to_str())
-        .is_some_and(|ext| return ext == "yml" || ext == "yaml");
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext == "yml" || ext == "yaml")
 }
 
 /// Pulls a string field's value out of a flat JSON body without a typed model.
 fn json_string_field(body: &str, field: &str) -> Option<String> {
     let needle = format!("\"{field}\":");
-    let Some((_, after)) = body.split_once(&needle) else {
-        return None;
-    };
-    let Some(open) = after.find('"') else {
-        return None;
-    };
-    let Some(rest) = after.get(open.saturating_add(1)..) else {
-        return None;
-    };
-    let Some(close) = rest.find('"') else {
-        return None;
-    };
-    return rest.get(..close).map(str::to_owned);
+    let (_, after) = body.split_once(&needle)?;
+    let open = after.find('"')?;
+    let rest = after.get(open.saturating_add(1)..)?;
+    let close = rest.find('"')?;
+    rest.get(..close).map(str::to_owned)
 }
 
 /// Leading numeric major of a version/tag (`v6`, `1.2.3` → `6`, `1`).
 fn major(version: &str) -> String {
     let trimmed = version.trim_start_matches('v');
-    return trimmed
+    trimmed
         .split(['.', '+', '-', ' '])
         .next()
         .unwrap_or(trimmed)
-        .to_owned();
+        .to_owned()
 }
 
 /// Right-pads a string to a minimum width with spaces.
@@ -229,55 +208,41 @@ fn pad(text: &str, width: usize) -> String {
     while out.chars().count() < width {
         out.push(' ');
     }
-    return out;
+    out
 }
 
 /// Parses one `name = "1.2.3"` or `name = { version = "1.2.3", … }` line.
 fn parse_dep_line(line: &str) -> Option<(String, String)> {
-    let Some((raw_name, rhs)) = line.split_once('=') else {
-        return None;
-    };
+    let (raw_name, rhs) = line.split_once('=')?;
     let name = raw_name.trim();
     if name.is_empty() || name.starts_with('#') {
         return None;
     }
     let body = rhs.trim();
     let version = if body.starts_with('{') {
-        let Some(found) = toml_string_field(body, "version") else {
-            return None;
-        };
-        found
+        toml_string_field(body, "version")?
     } else {
-        body.trim_matches(|ch| return ch == '"' || ch == ',')
-            .to_owned()
+        body.trim_matches(|ch| ch == '"' || ch == ',').to_owned()
     };
     if version.is_empty() {
         return None;
     }
-    return Some((name.to_owned(), version));
+    Some((name.to_owned(), version))
 }
 
 /// Pulls a `key = "value"` field out of a TOML inline table body.
 fn toml_string_field(body: &str, key: &str) -> Option<String> {
     let needle = format!("{key} =");
-    let Some((_, after)) = body.split_once(&needle) else {
-        return None;
-    };
-    let Some(open) = after.find('"') else {
-        return None;
-    };
-    let Some(rest) = after.get(open.saturating_add(1)..) else {
-        return None;
-    };
-    let Some(close) = rest.find('"') else {
-        return None;
-    };
-    return rest.get(..close).map(str::to_owned);
+    let (_, after) = body.split_once(&needle)?;
+    let open = after.find('"')?;
+    let rest = after.get(open.saturating_add(1)..)?;
+    let close = rest.find('"')?;
+    rest.get(..close).map(str::to_owned)
 }
 
 /// Whether two version strings share a leading major component.
 fn same_major(left: &str, right: &str) -> bool {
-    return major(left) == major(right);
+    major(left) == major(right)
 }
 
 /// Scans every dep source in parallel, returning the merged behind-latest set.
@@ -289,19 +254,16 @@ fn same_major(left: &str, right: &str) -> bool {
 /// Returns an error if eligible workflow enumeration fails.
 #[inline]
 pub fn scan(root: &Path, generated: &[String]) -> io::Result<Vec<Issue>> {
-    if env::var(ENV_SKIP).is_ok_and(|val| return val == "1") {
+    if env::var(ENV_SKIP).is_ok_and(|val| val == "1") {
         return Ok(Vec::new());
     }
-    let paths = match required(root) {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let paths = required(root)?;
     let crates_root = root.to_path_buf();
-    let crates_handle = thread::spawn(move || return scan_crates(&crates_root));
+    let crates_handle = thread::spawn(move || scan_crates(&crates_root));
     let actions = scan_actions(root, generated, &paths);
     let mut merged = crates_handle.join().unwrap_or_default();
     merged.extend(actions);
-    return Ok(merged);
+    Ok(merged)
 }
 
 /// Checks eligible GitHub Actions pins against each action's latest release.
@@ -314,7 +276,7 @@ fn scan_actions(root: &Path, generated: &[String], paths: &[PathBuf]) -> Vec<Iss
     }
     pins.sort();
     pins.dedup();
-    return resolve(pins, |pair| return action_issue(&pair.0, &pair.1));
+    resolve(pins, |pair| action_issue(&pair.0, &pair.1))
 }
 
 /// Collects pins from an eligible, non-generated workflow in the workflow directory.
@@ -329,9 +291,7 @@ fn collect_workflow(path: &Path, directory: &Path, generated: &[String], pins: &
 
 /// Checks each direct crate dep against its crates.io latest stable version.
 fn scan_crates(root: &Path) -> Vec<Issue> {
-    return resolve(cargo_deps(root), |pair| {
-        return crate_issue(&pair.0, &pair.1);
-    });
+    resolve(cargo_deps(root), |pair| crate_issue(&pair.0, &pair.1))
 }
 
 /// Resolves each `(name, version)` pin concurrently through `check`, keeping the
@@ -339,7 +299,7 @@ fn scan_crates(root: &Path) -> Vec<Issue> {
 fn resolve(pins: Vec<Pin>, check: Resolver) -> Vec<Issue> {
     let handles: Vec<_> = pins
         .into_iter()
-        .map(|pin| return thread::spawn(move || return check(pin)))
+        .map(|pin| thread::spawn(move || check(pin)))
         .collect();
     let mut out = Vec::new();
     for handle in handles {
@@ -347,7 +307,7 @@ fn resolve(pins: Vec<Pin>, check: Resolver) -> Vec<Issue> {
             out.push(issue);
         }
     }
-    return out;
+    out
 }
 
 #[cfg(test)]

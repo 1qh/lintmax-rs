@@ -11,8 +11,6 @@ use std::{
     process::ExitCode,
 };
 
-use super::normalize_dprint;
-
 thread_local! {
     /// Calls recorded by isolated dispatch and preparation tests.
     static CALLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -33,7 +31,6 @@ fn a_declared_advisory_lands_under_the_advisories_section() {
         advisory_at < merged.find("[bans]"),
         "it must not fall into [bans]"
     );
-    return;
 }
 
 /// # Panics
@@ -44,7 +41,6 @@ fn a_declared_duplicate_lands_under_the_bans_section() {
     let duplicate_at = merged.find("ttf-parser@0.25.1");
     assert!(duplicate_at.is_some(), "the declared duplicate is present");
     assert!(duplicate_at > merged.find("[bans]"), "it sits under [bans]");
-    return;
 }
 
 /// # Panics
@@ -56,7 +52,6 @@ fn a_declared_generated_path_reaches_the_formatter_excludes() {
         base.contains("\"excludes\": [\n"),
         "the embedded config carries the excludes block this fold anchors on"
     );
-    return;
 }
 
 /// Both spelling modes receive every generated path without dropping base exclusions.
@@ -71,7 +66,7 @@ fn a_declared_generated_path_reaches_the_spelling_excludes() {
     let parsed: toml::Table = require_success(toml::from_str(&merged).map_err(io::Error::other));
     let excluded = parsed
         .get("files")
-        .and_then(|files| return files.get("extend-exclude"))
+        .and_then(|files| files.get("extend-exclude"))
         .and_then(toml::Value::as_array)
         .cloned()
         .unwrap_or_default();
@@ -87,7 +82,6 @@ fn a_declared_generated_path_reaches_the_spelling_excludes() {
         super::merge_typos_exceptions(super::TYPOS_TOML, &super::Exceptions::default()),
         super::TYPOS_TOML
     );
-    return;
 }
 
 /// Merged vocabulary is an identity mapping and leaves all spelling checks enabled.
@@ -100,22 +94,17 @@ fn a_declared_word_reaches_the_spelling_vocabulary() {
     let merged = super::merge_typos_exceptions(super::TYPOS_TOML, &declared);
     let parsed: toml::Table = require_success(toml::from_str(&merged).map_err(io::Error::other));
     let defaults = parsed.get("default");
-    let words = defaults.and_then(|table| return table.get("extend-words"));
+    let words = defaults.and_then(|table| table.get("extend-words"));
     for word in ["nguyen", "retrieve", "quoted\"\\word"] {
         assert_eq!(
             words
-                .and_then(|table| return table.get(word))
+                .and_then(|table| table.get(word))
                 .and_then(toml::Value::as_str),
             Some(word)
         );
     }
-    assert!(
-        words
-            .and_then(|table| return table.get("misspelled"))
-            .is_none()
-    );
+    assert!(words.and_then(|table| table.get("misspelled")).is_none());
     assert!(spelling_checks_enabled(&parsed));
-    return;
 }
 
 /// # Panics
@@ -127,7 +116,6 @@ fn a_project_with_no_exceptions_gets_the_embedded_config_unchanged() {
         super::merge_exceptions(embedded, &super::Exceptions::default()),
         embedded
     );
-    return;
 }
 
 /// A missing prebuilt installer never receives an attempted install command.
@@ -150,14 +138,12 @@ fn absent_binstall_skips_straight_to_cargo_install() {
         assert_eq!(*calls.borrow(), [
             "cargo install --locked --force test-crate"
         ]);
-        return;
     });
-    return;
 }
 
 /// Reports a missing fixture tool without probing the host.
 fn absent_tool(_binary: &str) -> bool {
-    return false;
+    false
 }
 
 /// # Panics
@@ -175,7 +161,6 @@ fn an_undeclared_advisory_is_still_caught() {
         !merged.contains("RUSTSEC-2020-0000"),
         "only the declared advisories are ignored, so the gate still fails on any other"
     );
-    return;
 }
 
 /// # Panics
@@ -185,12 +170,11 @@ fn an_unknown_key_keeps_the_exceptions_a_project_already_declared() {
     let text = "advisories = [\"RUSTSEC-0000-0000\"]\nfrom-a-newer-gate = [\"x\"]\n";
     let parsed = toml::from_str::<super::Exceptions>(text).ok();
     assert_eq!(
-        parsed.map(|held| return held.advisories),
+        parsed.map(|held| held.advisories),
         Some(vec!["RUSTSEC-0000-0000".to_owned()]),
         "a key this version does not know must not drop the exceptions it does know, or a \
          consumer running an older gate fails its supply-chain stage on every declared advisory"
     );
-    return;
 }
 
 /// Bare invocation and explicit fix share the same action and exit status.
@@ -207,7 +191,6 @@ fn bare_command_dispatches_exactly_like_fix() {
         super::dispatch(Some(&super::Sub::Fix), check_action, fix_action),
         ExitCode::from(23)
     );
-    return;
 }
 
 /// Library test builds omit the binary lint; binary checks and fixes retain it.
@@ -216,15 +199,16 @@ fn bare_command_dispatches_exactly_like_fix() {
 /// On assertion failure.
 #[test]
 fn binary_dead_code_lint_is_scoped_to_binary_passes() {
-    assert!(!super::build_lint_args().iter().any(|lint| {
-        return lint == "dead_code_pub_in_binary";
-    }));
+    assert!(
+        !super::build_lint_args()
+            .iter()
+            .any(|lint| { lint == "dead_code_pub_in_binary" })
+    );
     for mode in [super::LintMode::Check, super::LintMode::Fix] {
         binary_pass_arguments(mode);
         binary_pass_execution(mode);
     }
     binary_target_metadata();
-    return;
 }
 
 /// Verifies binary check and autofix arguments without running cargo.
@@ -244,7 +228,6 @@ fn binary_pass_arguments(mode: super::LintMode) {
     expected.extend(super::build_lint_args());
     expected.extend(["-F".to_owned(), "dead_code_pub_in_binary".to_owned()]);
     assert_eq!(arguments, expected);
-    return;
 }
 
 /// Checks the library-only skip and preservation of a binary lint failure.
@@ -259,7 +242,6 @@ fn binary_pass_execution(mode: super::LintMode) {
     );
     CALLS.with(|calls| {
         assert!(calls.borrow().is_empty());
-        return;
     });
     assert_eq!(
         super::run_binary_lint_with(mode, Ok(true), record_binary_failure),
@@ -268,9 +250,7 @@ fn binary_pass_execution(mode: super::LintMode) {
     let arguments = super::binary_lint_args(mode);
     CALLS.with(|calls| {
         assert_eq!(*calls.borrow(), [format!("cargo {}", arguments.join(" "))]);
-        return;
     });
-    return;
 }
 
 /// Dependency binaries never make a library-only workspace require a binary pass.
@@ -294,7 +274,6 @@ fn binary_target_metadata() {
         ]
     });
     assert!(super::workspace_metadata_has_binary(&binary));
-    return;
 }
 
 /// Cargo subcommand probes pass their name through cargo before the version flag.
@@ -312,12 +291,11 @@ fn cargo_hack_probe_uses_the_cargo_subcommand() {
         "hack",
         "--version"
     ]);
-    return;
 }
 
 /// A check action sentinel that never starts a child.
 fn check_action() -> ExitCode {
-    return ExitCode::from(17);
+    ExitCode::from(17)
 }
 
 /// Locked checking preserves every Rust lint argument after the cargo separator.
@@ -326,9 +304,10 @@ fn check_action() -> ExitCode {
 /// On assertion failure.
 #[test]
 fn check_arguments_preserve_the_compiler_separator() {
-    super::discard(super::CHECK_CONFIGS.with(|directory| {
-        return directory.replace(Some(PathBuf::from("isolated-configs")));
-    }));
+    super::discard(
+        super::CHECK_CONFIGS
+            .with(|directory| directory.replace(Some(PathBuf::from("isolated-configs")))),
+    );
     let mut command = super::tool_command("cargo");
     super::command_args(&mut command, "cargo", &[
         "clippy",
@@ -337,7 +316,7 @@ fn check_arguments_preserve_the_compiler_separator() {
         "-F",
         "missing_docs",
     ]);
-    super::discard(super::CHECK_CONFIGS.with(|directory| return directory.replace(None)));
+    super::discard(super::CHECK_CONFIGS.with(|directory| directory.replace(None)));
     assert_eq!(command.get_args().collect::<Vec<_>>(), [
         "clippy",
         "--quiet",
@@ -346,7 +325,6 @@ fn check_arguments_preserve_the_compiler_separator() {
         "-F",
         "missing_docs"
     ]);
-    return;
 }
 
 /// Checker config generation leaves the project directory untouched.
@@ -362,7 +340,6 @@ fn check_configs_are_isolated_from_the_project() {
     let after = managed_config_contents();
     assert_eq!(before, after);
     assert!(!super::checking());
-    return;
 }
 
 /// Checks that every generated config lives outside the project directory.
@@ -375,7 +352,6 @@ fn check_isolated_config_directory(directory: &Path) {
     for &(name, _) in super::MANAGED_CONFIGS {
         assert!(directory.join(name).is_file());
     }
-    return;
 }
 
 /// Checking requests components, child tools, and nightly formatting in order.
@@ -388,9 +364,7 @@ fn check_requests_every_required_tool_before_stages() {
     super::prepare_check(record_components, record_tools, record_rustfmt);
     CALLS.with(|calls| {
         assert_eq!(*calls.borrow(), ["components", "tools", "nightly rustfmt"]);
-        return;
     });
-    return;
 }
 
 /// Check and informational dispatch cannot run the fix action or its refresh.
@@ -415,7 +389,6 @@ fn check_version_and_rules_never_dispatch_fix() {
         super::dispatch(Some(&super::Sub::Rules), forbidden_action, forbidden_action),
         ExitCode::SUCCESS
     );
-    return;
 }
 
 /// The allowed-lint tables name exactly the code's exceptions in both directions.
@@ -428,8 +401,8 @@ fn clippy_allow_tables_match_the_code() {
     let mut documented = Vec::new();
     for line in documentation
         .lines()
-        .skip_while(|line| return *line != "### Contradicting clippy lint pairs")
-        .take_while(|line| return !line.starts_with("## "))
+        .skip_while(|line| *line != "### Contradicting clippy lint pairs")
+        .take_while(|line| !line.starts_with("## "))
     {
         if let Some(row) = line.strip_prefix("| `") {
             let lint = row.split('`').next().unwrap_or_default();
@@ -438,7 +411,6 @@ fn clippy_allow_tables_match_the_code() {
     }
     documented.sort();
     assert_eq!(documented, super::CLIPPY_ALLOW);
-    return;
 }
 
 /// External exception changes invalidate a previously green cache identity.
@@ -457,12 +429,11 @@ fn external_exception_contents_change_the_cache_identity() {
     assert!(after.is_some());
     assert_ne!(before, after);
     super::discard(fs::remove_dir_all(directory));
-    return;
 }
 
 /// A fix action sentinel that never starts a child.
 fn fix_action() -> ExitCode {
-    return ExitCode::from(23);
+    ExitCode::from(23)
 }
 
 /// Config writing always precedes the toolchain refresh.
@@ -475,14 +446,12 @@ fn fix_writes_configs_before_refreshing() {
     super::prepare_fix(record_configs, record_refresh);
     CALLS.with(|calls| {
         assert_eq!(*calls.borrow(), ["configs", "refresh"]);
-        return;
     });
-    return;
 }
 
 /// A forbidden action sentinel for read-only dispatch.
 fn forbidden_action() -> ExitCode {
-    return ExitCode::FAILURE;
+    ExitCode::FAILURE
 }
 
 /// Both modes omit generated globs and exact paths from formatter and spelling argv.
@@ -498,9 +467,10 @@ fn generated_files_never_reach_explicit_tool_arguments() {
         ..super::Exceptions::default()
     };
     for checking in [true, false] {
-        super::discard(super::CHECK_CONFIGS.with(|directory| {
-            return directory.replace(checking.then(|| return config.clone()));
-        }));
+        super::discard(
+            super::CHECK_CONFIGS
+                .with(|directory| directory.replace(checking.then(|| config.clone()))),
+        );
         let paths = [
             "frozen/root.json",
             "frozen/nested/data.json",
@@ -508,7 +478,7 @@ fn generated_files_never_reach_explicit_tool_arguments() {
             "record.json.extra",
             "sibling.json",
         ]
-        .map(|relative| return root.join(relative));
+        .map(|relative| root.join(relative));
         let eligible = super::filter_project_files(&root, paths.to_vec(), &[], &declared.generated);
         let expected = [root.join("record.json.extra"), root.join("sibling.json")];
         assert_eq!(eligible, expected);
@@ -516,7 +486,7 @@ fn generated_files_never_reach_explicit_tool_arguments() {
         let action = if checking { "check" } else { "fmt" };
         let formatter = super::dprint_command(action, &patterns);
         let mut formatter_args = vec![OsStr::new(action)];
-        formatter_args.extend(expected.iter().map(|path| return path.as_os_str()));
+        formatter_args.extend(expected.iter().map(|path| path.as_os_str()));
         let formatter_config = config.join("dprint.json");
         if checking {
             formatter_args.extend([OsStr::new("--config"), formatter_config.as_os_str()]);
@@ -526,16 +496,15 @@ fn generated_files_never_reach_explicit_tool_arguments() {
         let spelling = super::typos_command(extra, &eligible);
         let mut spelling_args: Vec<&OsStr> = extra.iter().map(OsStr::new).collect();
         spelling_args.push(OsStr::new("--force-exclude"));
-        spelling_args.extend(expected.iter().map(|path| return path.as_os_str()));
+        spelling_args.extend(expected.iter().map(|path| path.as_os_str()));
         let spelling_config = config.join("typos.toml");
         if checking {
             spelling_args.extend([OsStr::new("--config"), spelling_config.as_os_str()]);
         }
         assert_eq!(spelling.get_args().collect::<Vec<_>>(), spelling_args);
-        super::discard(super::CHECK_CONFIGS.with(|directory| return directory.replace(None)));
+        super::discard(super::CHECK_CONFIGS.with(|directory| directory.replace(None)));
     }
     super::discard(fs::remove_dir_all(root));
-    return;
 }
 
 /// Generated wildcards respect directory boundaries and exact plain paths.
@@ -556,7 +525,6 @@ fn generated_globs_match_root_relative_paths() {
     ] {
         assert_eq!(super::generated_glob_matches(pattern, path), expected);
     }
-    return;
 }
 
 /// The machete command retains the bare binary argv convention.
@@ -569,15 +537,14 @@ fn machete_command_does_not_add_a_subcommand_argument() {
     assert_eq!(command.get_args().collect::<Vec<_>>(), [OsStr::new(
         "Cargo.toml"
     )]);
-    return;
 }
 
 /// Captures existing project config bytes without changing any files.
 fn managed_config_contents() -> Vec<Option<Vec<u8>>> {
-    return super::MANAGED_CONFIGS
+    super::MANAGED_CONFIGS
         .iter()
-        .map(|&(name, _)| return fs::read(name).ok())
-        .collect();
+        .map(|&(name, _)| fs::read(name).ok())
+        .collect()
 }
 
 /// The merged config for one declared advisory and one declared duplicate.
@@ -588,7 +555,7 @@ fn merged_sample() -> String {
         duplicates: vec!["ttf-parser@0.25.1".to_owned()],
         words: Vec::new(),
     };
-    return super::merge_exceptions(super::DENY_TOML, &declared);
+    super::merge_exceptions(super::DENY_TOML, &declared)
 }
 
 /// A failing named stage keeps its exit code and stops before the next stage.
@@ -606,17 +573,6 @@ fn named_stage_reports_name_and_preserves_exit_code() {
         ExitCode::from(23)
     );
     assert_eq!(output, b"lintmax: gate stage machete failed\n");
-    return;
-}
-
-/// # Panics
-/// On assertion failure.
-#[test]
-fn normalize_strips_plugin_version() {
-    let pinned = "\"https://plugins.dprint.dev/toml-0.7.0.wasm\",";
-    let other = "\"https://plugins.dprint.dev/toml-0.9.9.wasm\",";
-    assert_eq!(normalize_dprint(pinned), normalize_dprint(other));
-    return;
 }
 
 /// Both exception sources contribute all four lists.
@@ -646,25 +602,52 @@ fn project_and_external_exceptions_merge_every_list() {
         assert_eq!(declared.words, ["nguyen", "retrieve"]);
     }
     super::discard(fs::remove_dir_all(directory));
-    return;
+}
+
+/// Cleanup recognises updated plugins while preserving project customisations.
+///
+/// # Panics
+/// On assertion or fixture failure.
+#[test]
+fn owned_dprint_configs_allow_only_plugin_versions_and_sources_to_change() {
+    let directory = test_directory("dprint-ownership");
+    let path = directory.join("dprint.json");
+    for source in ["npm", "url", "mixed"] {
+        require_success(fs::write(&path, updated_dprint_config(source)));
+        assert!(super::is_bumped_dprint(&path, super::DPRINT_JSON));
+    }
+    let config = updated_dprint_config("npm");
+    for customised in [
+        config.replace("\"lineWidth\": 100", "\"lineWidth\": 80"),
+        config.replace("npm:@dprint/json@99.8.7", "npm:another-plugin@99.8.7"),
+        config.replace(
+            "npm:@dprint/json@99.8.7",
+            "npm:extra-plugin@99.8.7\", \"npm:@dprint/json@99.8.7",
+        ),
+        config.replace(",\"npm:@dprint/json@99.8.7\"", ""),
+    ] {
+        require_success(fs::write(&path, customised));
+        assert!(!super::is_bumped_dprint(&path, super::DPRINT_JSON));
+    }
+    require_success(fs::write(&path, "invalid json"));
+    assert!(!super::is_bumped_dprint(&path, "invalid json"));
+    super::discard(fs::remove_dir_all(directory));
 }
 
 /// Records binary lint arguments and returns a failing clippy status.
 fn record_binary_failure(binary: &str, arguments: &[&str]) -> ExitCode {
     super::discard(record_install(binary, arguments));
-    return ExitCode::from(23);
+    ExitCode::from(23)
 }
 
 /// Records active-toolchain component preparation.
 fn record_components() {
     CALLS.with(|calls| return calls.borrow_mut().push("components".to_owned()));
-    return;
 }
 
 /// Records the configuration-writing step.
 fn record_configs() {
     CALLS.with(|calls| return calls.borrow_mut().push("configs".to_owned()));
-    return;
 }
 
 /// Records installer argv without invoking cargo or writing installed tools.
@@ -674,25 +657,22 @@ fn record_install(binary: &str, arguments: &[&str]) -> ExitCode {
             .borrow_mut()
             .push(format!("{binary} {}", arguments.join(" ")));
     });
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Records the toolchain-refresh step.
 fn record_refresh() {
     CALLS.with(|calls| return calls.borrow_mut().push("refresh".to_owned()));
-    return;
 }
 
 /// Records nightly rustfmt preparation without starting rustup.
 fn record_rustfmt() {
     CALLS.with(|calls| return calls.borrow_mut().push("nightly rustfmt".to_owned()));
-    return;
 }
 
 /// Records child-tool preparation.
 fn record_tools() {
     CALLS.with(|calls| return calls.borrow_mut().push("tools".to_owned()));
-    return;
 }
 
 /// Extracts a fixture result with its original failure diagnostic.
@@ -708,7 +688,7 @@ where
         Err(error) => (T::default(), Some(error.to_string())),
     };
     assert_eq!(error, None, "fixture operation failed");
-    return value;
+    value
 }
 
 /// An executable fixture may reuse this test executable without starting it.
@@ -720,7 +700,7 @@ fn resolver_fixture(directory: &Path, name: &str) -> PathBuf {
     let destination = directory.join(name);
     let executable = std_env_current_exe();
     super::discard(require_success(fs::copy(executable, &destination)));
-    return destination;
+    destination
 }
 
 /// Resolution prefers PATH, then `CARGO_HOME`, then the default cargo home.
@@ -760,7 +740,6 @@ fn resolver_searches_path_then_cargo_home_and_default_home() {
     );
     assert_eq!(super::resolve_tool_in("missing", None, None, None), None);
     super::discard(fs::remove_dir_all(directory));
-    return;
 }
 
 /// The new stable allow-by-default lints are forbidden in sorted order.
@@ -773,10 +752,9 @@ fn rustc_forbid_includes_new_stable_lints_in_order() {
     assert!(
         super::RUSTC_FORBID
             .windows(2)
-            .all(|pair| return pair.first() < pair.get(1))
+            .all(|pair| pair.first() < pair.get(1))
     );
     unstable_lint_documentation_is_current();
-    return;
 }
 
 /// Every spawn error names its binary and includes the original IO error.
@@ -811,7 +789,6 @@ fn spawn_errors_name_the_tool_and_io_error() {
         super::cmd_quiet("lintmax-test-no-such-command", &[]),
         ExitCode::FAILURE
     );
-    return;
 }
 
 /// Both spelling modes keep their original arguments and enforce file exclusions.
@@ -828,18 +805,17 @@ fn spelling_arguments_keep_exclusions() {
         ]);
         assert_eq!(command.get_args().collect::<Vec<_>>(), expected);
     }
-    return;
 }
 
 /// Whether both content and filename spelling checks remain enabled.
 fn spelling_checks_enabled(parsed: &toml::Table) -> bool {
-    return ["check-file", "check-filename"].iter().all(|key| {
-        return parsed
+    ["check-file", "check-filename"].iter().all(|key| {
+        parsed
             .get("default")
-            .and_then(|table| return table.get(*key))
+            .and_then(|table| table.get(*key))
             .and_then(toml::Value::as_bool)
-            == Some(true);
-    });
+            == Some(true)
+    })
 }
 
 /// Reads spelling exceptions from both sources without changing process environment.
@@ -860,7 +836,7 @@ fn spelling_exceptions() -> super::Exceptions {
     ));
     let declared = require_success(super::read_exceptions(&root, Some(&external)));
     super::discard(fs::remove_dir_all(directory));
-    return declared;
+    declared
 }
 
 /// Checks the compiler arguments for each newly stable lint.
@@ -872,9 +848,8 @@ fn stable_lint_flags_are_forbidden() {
     assert!(
         arguments
             .windows(2)
-            .any(|pair| return pair == ["-F", "raw_borrows_via_references"])
+            .any(|pair| pair == ["-F", "raw_borrows_via_references"])
     );
-    return;
 }
 
 /// Returns this test executable's path for executable resolver fixtures.
@@ -882,7 +857,7 @@ fn stable_lint_flags_are_forbidden() {
 /// # Panics
 /// When the operating system cannot locate the current executable.
 fn std_env_current_exe() -> PathBuf {
-    return require_success(env::current_exe());
+    require_success(env::current_exe())
 }
 
 /// Creates a uniquely named scratch directory outside the repository.
@@ -898,7 +873,7 @@ fn test_directory(label: &str) -> PathBuf {
         SERIAL.fetch_add(1, Ordering::Relaxed)
     ));
     require_success(fs::create_dir_all(&directory));
-    return directory;
+    directory
 }
 
 /// An explicitly selected unreadable exception file is a path-bearing error.
@@ -921,7 +896,6 @@ fn unreadable_external_exceptions_fail_with_the_path() {
             .contains(external.to_string_lossy().as_ref())
     );
     super::discard(fs::remove_dir_all(directory));
-    return;
 }
 
 /// Checks the documented unstable lint names against their current spellings.
@@ -934,5 +908,37 @@ fn unstable_lint_documentation_is_current() {
     assert!(documentation.contains("`deprecated_llvm_intrinsic`"));
     assert!(!documentation.contains("`fuzzy_provenance_casts`"));
     assert!(!documentation.contains("`lossy_provenance_casts`"));
-    return;
+}
+
+/// Builds reordered fixtures for every plugin source syntax without changing settings.
+fn updated_dprint_config(source: &str) -> String {
+    let plugins = [
+        ("json", "@dprint/json"),
+        ("markdown", "@dprint/markdown"),
+        ("toml", "@dprint/toml"),
+        ("dockerfile", "@dprint/dockerfile"),
+        ("g-plane/pretty_yaml", "dprint-plugin-yaml"),
+        ("g-plane/malva", "dprint-plugin-malva"),
+        ("g-plane/markup_fmt", "dprint-plugin-markup"),
+        ("g-plane/pretty_graphql", "dprint-plugin-graphql"),
+        ("bartlomieju/lax-sql", "lax-sql"),
+    ];
+    let entries = plugins
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(index, &(url, npm))| {
+            let specifier = if source == "url" || (source == "mixed" && index.is_multiple_of(2)) {
+                format!("https://plugins.dprint.dev/{url}-v99.8.7.wasm")
+            } else {
+                format!("npm:{npm}@99.8.7")
+            };
+            format!("\"{specifier}\"")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let (settings, _) = super::DPRINT_JSON
+        .split_once("\"plugins\":")
+        .unwrap_or_default();
+    format!("{settings}\"plugins\": [{entries}]}}")
 }

@@ -8,16 +8,16 @@ Single binary (`cargo-lintmax`) that embeds all config files and lint flags. No 
 
 ## Code style rules (enforced by the tool on itself)
 
-### Explicit returns everywhere
+### Implicit returns
 
-`implicit_return` (restriction) is active. Every function, closure, and match arm must use explicit `return`. This conflicts with `needless_return` (style), which is allowed.
+`needless_return` (style) is enforced: a function, closure or match arm ends in its value, never in `return`. The restriction lint `implicit_return` demands the opposite and is allowed, because a restriction lint that contradicts a default or pedantic lint gives way to it, so code that passes this gate also passes a project's standard `cargo clippy -D warnings`.
 
 ```rust
 fn foo() -> i32 {
-    return 42;
+    42
 }
-.map(|val| return val + 1)
-.filter(|val| return !val.is_empty())
+.map(|val| val + 1)
+.filter(|val| !val.is_empty())
 ```
 
 ### Doc comments on everything, no regular comments
@@ -82,13 +82,13 @@ Standard library first, then external crates. One `use` per import — no `{A, B
 
 ### `#[cfg]` blocks and semicolons
 
-`semicolon_outside_block` (restriction) and `semicolon_if_nothing_returned` (pedantic) conflict on `#[cfg]` blocks. Both are allowed in the lint config. When writing cfg blocks that call `discard()`, omit the semicolon inside and put it outside:
+`semicolon_outside_block` (restriction) and `semicolon_if_nothing_returned` (pedantic) conflict on `#[cfg]` blocks. The pedantic lint is enforced and the restriction lint is allowed, so the semicolon goes inside the block:
 
 ```rust
 #[cfg(unix)]
 {
-    discard(some_call())
-};
+    discard(some_call());
+}
 ```
 
 ### Single-character identifiers
@@ -107,9 +107,9 @@ Standard library first, then external crates. One `use` per import — no `{A, B
 ExitCode::from(u8::try_from(code).unwrap_or(1))
 ```
 
-### `?` operator forbidden
+### `?` for error propagation
 
-`question_mark_used` (restriction) is active. Cannot use `?` for error propagation. Must use explicit `match`, `if let`, or `map`/`and_then` chains. For infallible-in-practice operations, use `discard()`.
+`question_mark` (style) is enforced: propagate an error with `?`, never with a `match` that only returns the error. The restriction lint `question_mark_used` forbids `?` and is allowed, for the same reason as `implicit_return`.
 
 ### `unwrap()` and `expect()` forbidden
 
@@ -130,16 +130,18 @@ ExitCode::from(u8::try_from(code).unwrap_or(1))
 
 ### Contradicting clippy lint pairs
 
-These allows resolve conflicts with enforced lints or the selected module layout:
+These allows resolve conflicts with enforced lints or the selected module layout. Where a restriction lint contradicts a default or pedantic lint, the default or pedantic lint is enforced, so code passing this gate also passes a project's standard clippy:
 
-| Allowed                    | Kept (enforced)                                                             |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `separated_literal_suffix` | `unseparated_literal_suffix` — write `1i32` not `1_i32`                     |
-| `pub_with_shorthand`       | `pub_without_shorthand` — write `pub(crate)` not `pub`                      |
-| `self_named_module_files`  | `mod_module_files` — use `mod.rs` for directory modules                     |
-| `redundant_pub_crate`      | `pub_without_shorthand` — retain explicit crate visibility in binary crates |
-| `ref_patterns`             | `pattern_type_mismatch` — permit explicit reference patterns                |
-| `needless_return`          | `implicit_return` — explicit returns required                               |
+| Allowed                    | Kept (enforced)                                                              |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `separated_literal_suffix` | `unseparated_literal_suffix` — write `1i32` not `1_i32`                      |
+| `pub_with_shorthand`       | `pub_without_shorthand` — write `pub(crate)` not `pub`                       |
+| `self_named_module_files`  | `mod_module_files` — use `mod.rs` for directory modules                      |
+| `redundant_pub_crate`      | `pub_without_shorthand` — retain explicit crate visibility in binary crates  |
+| `ref_patterns`             | `pattern_type_mismatch` — permit explicit reference patterns                 |
+| `implicit_return`          | `needless_return` — end in the value, never in `return`                      |
+| `question_mark_used`       | `question_mark` — propagate errors with `?`                                  |
+| `semicolon_outside_block`  | `semicolon_if_nothing_returned` — the semicolon goes inside a `#[cfg]` block |
 
 ### Additionally allowed for practicality
 
@@ -147,8 +149,6 @@ These allows resolve conflicts with enforced lints or the selected module layout
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cognitive_complexity`             | Counts code expanded from macros (rust-lang/rust-clippy #14417, open): a function holding only one `tracing::warn!` scores 8 against a threshold of 5 once `tracing`'s `log` feature is on, which `sqlx-core` enables unconditionally, so it judges the macro, not the function. `too_many_lines`, `excessive_nesting`, `too_many_arguments` and the bool-parameter lints still bound each function. Revisit when #14417 closes |
 | `single_call_fn`                   | Flags any fn called once — would require inlining all dispatch logic                                                                                                                                                                                                                                                                                                                                                            |
-| `semicolon_outside_block`          | Conflicts with `semicolon_if_nothing_returned` on `#[cfg]` blocks                                                                                                                                                                                                                                                                                                                                                               |
-| `semicolon_if_nothing_returned`    | Same conflict, opposite direction                                                                                                                                                                                                                                                                                                                                                                                               |
 | `blanket_clippy_restriction_lints` | The gate deliberately enables the entire restriction group                                                                                                                                                                                                                                                                                                                                                                      |
 | `float_arithmetic`                 | The floatdiv advisory checks unguarded float division more precisely                                                                                                                                                                                                                                                                                                                                                            |
 | `multiple_crate_versions`          | The cargo-deny stage audits duplicates with declared exceptions                                                                                                                                                                                                                                                                                                                                                                 |
@@ -199,6 +199,7 @@ The binary shells out to these tools (must be installed):
 - `write_configs()` writes temp files before checks, `clean_configs()` removes them after
 - If a config file already exists with different content (user-customized), lintmax does NOT overwrite it
 - If the file matches embedded content exactly, it is cleaned up (considered lintmax-managed)
+- A dprint config is also lintmax-managed when every non-plugin setting matches the embedded config and the plugin set is unchanged. Plugin versions, ordering, and legacy URL versus npm specifier syntax may differ. Changed settings or added, removed, or replaced plugins make it user-customized and it is kept.
 - The only files lintmax writes in a consumer are the temp linter configs above, removed after the run; it never scaffolds consumer project files
 
 ## Testing the tool

@@ -76,7 +76,7 @@ fn opens_char_literal(chars: &[char], at: usize) -> bool {
         }
         ahead = ahead.saturating_add(1);
     }
-    return false;
+    false
 }
 
 /// The line with its string literals, character literals and comment removed.
@@ -98,7 +98,7 @@ fn code_only(line: &str) -> String {
         kept.push(character);
         index = index.saturating_add(1);
     }
-    return kept;
+    kept
 }
 
 /// The index just past the literal opened at `at` by `quote`.
@@ -111,7 +111,7 @@ fn literal_end(chars: &[char], at: usize, quote: char) -> usize {
             _ => index = index.saturating_add(1),
         }
     }
-    return chars.len();
+    chars.len()
 }
 
 /// Sorts every rust file under a root: module items, then members.
@@ -120,16 +120,13 @@ fn literal_end(chars: &[char], at: usize, quote: char) -> usize {
 /// Returns an error if eligible file enumeration fails.
 #[inline]
 pub fn sort_tree(root: &Path) -> io::Result<()> {
-    let paths = match rust_files(root) {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let paths = rust_files(root)?;
     for path in paths {
         let _sorted = sort_file(&path);
         let _members = sort_members(&path);
         report_stranded(&path);
     }
-    return Ok(());
+    Ok(())
 }
 
 /// Names every member left with no doc comment in one file.
@@ -150,7 +147,7 @@ fn member_name(line: &str) -> Option<String> {
     let bare = line.trim_start();
     let stripped = bare
         .split_once("pub(crate) ")
-        .map_or(bare, |rest| return rest.1)
+        .map_or(bare, |rest| rest.1)
         .trim_start_matches("pub ");
     for keyword in [
         "fn ",
@@ -161,19 +158,19 @@ fn member_name(line: &str) -> Option<String> {
         "type ",
     ] {
         let named = stripped.strip_prefix(keyword).map(leading_identifier);
-        if let Some(found) = named.filter(|taken| return !taken.is_empty()) {
+        if let Some(found) = named.filter(|taken| !taken.is_empty()) {
             return Some(found);
         }
     }
-    return None;
+    None
 }
 
 /// The identifier a fragment opens with, which may be empty.
 fn leading_identifier(fragment: &str) -> String {
-    return fragment
+    fragment
         .chars()
-        .take_while(|character| return character.is_alphanumeric() || *character == '_')
-        .collect();
+        .take_while(|character| character.is_alphanumeric() || *character == '_')
+        .collect()
 }
 
 /// The name a struct field or enum variant carries, when the line declares one.
@@ -184,24 +181,24 @@ fn field_name(line: &str) -> Option<String> {
     }
     let stripped = bare
         .split_once("pub(crate) ")
-        .map_or(bare, |rest| return rest.1)
+        .map_or(bare, |rest| rest.1)
         .trim_start_matches("pub ");
     let named = leading_identifier(stripped);
     if named.is_empty() {
         return None;
     }
-    return Some(named);
+    Some(named)
 }
 
 /// Whether a line opens a top-level item, and which group it sorts into.
 fn group_of(line: &str) -> Option<u8> {
     let bare = line
         .trim_start_matches("pub ")
-        .trim_start_matches(|character: char| return character != ' ' && line.starts_with("pub("))
+        .trim_start_matches(|character: char| character != ' ' && line.starts_with("pub("))
         .trim_start();
     let head = if bare.starts_with("pub(") {
         bare.split_once(british_close())
-            .map_or(bare, |rest| return rest.1.trim_start())
+            .map_or(bare, |rest| rest.1.trim_start())
     } else {
         bare
     };
@@ -210,12 +207,12 @@ fn group_of(line: &str) -> Option<u8> {
             return Some(group);
         }
     }
-    return None;
+    None
 }
 
 /// The character closing a visibility qualifier.
 const fn british_close() -> char {
-    return ')';
+    ')'
 }
 
 /// The items a file declares at top level, docs and attributes attached.
@@ -240,7 +237,7 @@ fn items(lines: &[String]) -> Vec<Item> {
         let start = header.unwrap_or(index);
         let gated = lines
             .get(start..=index)
-            .is_some_and(|span| return span.iter().any(|held| return held.starts_with("#[cfg")));
+            .is_some_and(|span| span.iter().any(|held| held.starts_with("#[cfg")));
         let end = extent(lines, index);
         found.push(Item {
             end,
@@ -250,7 +247,7 @@ fn items(lines: &[String]) -> Vec<Item> {
         header = None;
         index = end.saturating_add(1);
     }
-    return found;
+    found
 }
 
 /// The last line of the item opening at `start`, counting every bracket kind.
@@ -273,7 +270,7 @@ fn extent(lines: &[String], start: usize) -> usize {
         }
         index = index.saturating_add(1);
     }
-    return lines.len().saturating_sub(1);
+    lines.len().saturating_sub(1)
 }
 
 /// Every eligible rust file under a root.
@@ -281,31 +278,24 @@ fn extent(lines: &[String], start: usize) -> usize {
 /// # Errors
 /// Returns an error if eligible file enumeration fails.
 fn rust_files(root: &Path) -> io::Result<Vec<PathBuf>> {
-    return required(root).map(|paths| {
-        return paths
+    required(root).map(|paths| {
+        paths
             .into_iter()
-            .filter(|path| {
-                return path
-                    .extension()
-                    .is_some_and(|extension| return extension == "rs");
-            })
-            .collect();
-    });
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    })
 }
 
 /// The lines a sorted file carries, or `None` when the order already ascends.
 fn placed_lines(lines: &[String], found: &[Item]) -> Option<Vec<String>> {
-    let groups: Vec<u8> = found.iter().filter_map(|item| return item.group).collect();
+    let groups: Vec<u8> = found.iter().filter_map(|item| item.group).collect();
     let mut sorted = groups.clone();
     sorted.sort_unstable();
     if groups == sorted {
         return None;
     }
-    let mut movable: Vec<&Item> = found
-        .iter()
-        .filter(|item| return item.group.is_some())
-        .collect();
-    movable.sort_by_key(|item| return (item.group, item.start));
+    let mut movable: Vec<&Item> = found.iter().filter(|item| item.group.is_some()).collect();
+    movable.sort_by_key(|item| (item.group, item.start));
     let mut order = movable.into_iter();
     let mut rebuilt: Vec<String> = Vec::new();
     let mut index = 0_usize;
@@ -313,10 +303,7 @@ fn placed_lines(lines: &[String], found: &[Item]) -> Option<Vec<String>> {
         carry(&mut rebuilt, lines, index..item.start);
         let placed = match item.group {
             None => item,
-            Some(_) => match order.next() {
-                Some(next) => next,
-                None => return None,
-            },
+            Some(_) => order.next()?,
         };
         carry(
             &mut rebuilt,
@@ -326,7 +313,7 @@ fn placed_lines(lines: &[String], found: &[Item]) -> Option<Vec<String>> {
         index = item.end.saturating_add(1);
     }
     carry(&mut rebuilt, lines, index..lines.len());
-    return Some(rebuilt);
+    Some(rebuilt)
 }
 
 /// Copies a span of lines onto the rebuilt file.
@@ -350,7 +337,7 @@ fn sort_file(path: &Path) -> bool {
         report_refusal(path, &original, &rewritten);
         return false;
     }
-    return fs::write(path, rewritten).is_ok();
+    fs::write(path, rewritten).is_ok()
 }
 
 /// The members a block declares between `open` and `close`.
@@ -388,7 +375,7 @@ fn members(lines: &[String], open: usize, close: usize, named: &NameOf) -> Vec<M
         header = None;
         index = end.saturating_add(1);
     }
-    return found;
+    found
 }
 
 /// The last line of the member opening at `start`, bounded by its block.
@@ -413,7 +400,7 @@ fn member_extent(lines: &[String], start: usize, close: usize) -> usize {
         }
         index = index.saturating_add(1);
     }
-    return close.saturating_sub(1);
+    close.saturating_sub(1)
 }
 
 /// The line closing the block opened at `open`.
@@ -433,7 +420,7 @@ fn block_close(lines: &[String], open: usize) -> usize {
         }
         index = index.saturating_add(1);
     }
-    return lines.len().saturating_sub(1);
+    lines.len().saturating_sub(1)
 }
 
 /// Sorts every block's members in a file's lines, reporting whether any moved.
@@ -454,7 +441,7 @@ fn sorted_blocks(lines: &mut Vec<String>) -> bool {
         }
         index = close.saturating_add(1);
     }
-    return changed;
+    changed
 }
 
 /// Sorts the members of every impl block and every type in one file.
@@ -471,7 +458,7 @@ fn sort_members(path: &Path) -> bool {
         report_refusal(path, &original, &rewritten);
         return false;
     }
-    return fs::write(path, rewritten).is_ok();
+    fs::write(path, rewritten).is_ok()
 }
 
 /// The name reader a block's opening line calls for, if it opens one at all.
@@ -485,25 +472,22 @@ fn reader_for(line: &'_ str) -> Option<&'static NameOf> {
     if opens_type(line) {
         return Some(&field_name);
     }
-    return None;
+    None
 }
 
 /// Whether a line opens a struct or enum whose members sort by name.
 fn opens_type(line: &str) -> bool {
     let bare = line
         .split_once("pub(crate) ")
-        .map_or(line, |rest| return rest.1)
+        .map_or(line, |rest| rest.1)
         .trim_start_matches("pub ");
-    return bare.starts_with("struct ") || bare.starts_with("enum ");
+    bare.starts_with("struct ") || bare.starts_with("enum ")
 }
 
 /// Sorts one block's members in place, reporting whether anything moved.
 fn sort_block(lines: &mut Vec<String>, open: usize, close: usize, named: &NameOf) -> bool {
     let found = members(lines, open, close, named);
-    let order: Vec<String> = found
-        .iter()
-        .filter_map(|item| return item.name.clone())
-        .collect();
+    let order: Vec<String> = found.iter().filter_map(|item| item.name.clone()).collect();
     let mut sorted = order.clone();
     sorted.sort();
     if order == sorted || order.len() < 2 {
@@ -519,7 +503,7 @@ fn sort_block(lines: &mut Vec<String>, open: usize, close: usize, named: &NameOf
         return false;
     }
     let mut ranked: Vec<&Member> = found.iter().collect();
-    ranked.sort_by(|left, right| return left.name.cmp(&right.name));
+    ranked.sort_by(|left, right| left.name.cmp(&right.name));
     let mut rebuilt: Vec<String> = Vec::new();
     for member in ranked {
         separate(&mut rebuilt);
@@ -528,7 +512,7 @@ fn sort_block(lines: &mut Vec<String>, open: usize, close: usize, named: &NameOf
         }
     }
     drop(lines.splice(first.start..=last.end, rebuilt));
-    return true;
+    true
 }
 
 /// Whether the members cover every line carrying code across their own span.
@@ -540,16 +524,14 @@ fn tiles(lines: &[String], found: &[Member], first: usize, last: usize) -> bool 
     while index <= last {
         let owned = found
             .iter()
-            .any(|member| return member.start <= index && index <= member.end);
-        let blank = lines
-            .get(index)
-            .is_some_and(|line| return line.trim().is_empty());
+            .any(|member| member.start <= index && index <= member.end);
+        let blank = lines.get(index).is_some_and(|line| line.trim().is_empty());
         if !owned && !blank {
             return false;
         }
         index = index.saturating_add(1);
     }
-    return true;
+    true
 }
 
 /// Opens a blank line between two members a rewrite places back to back.
@@ -609,26 +591,20 @@ fn block_after(line: Option<&String>, current: Block) -> Block {
     if text == "}" {
         return Block::Other;
     }
-    return current;
+    current
 }
 
 /// The name of the member declared at `at`, when nothing documents it.
 fn undocumented_member(lines: &[String], at: usize) -> Option<String> {
-    let Some(line) = lines.get(at) else {
-        return None;
-    };
+    let line = lines.get(at)?;
     if !line.starts_with("    ") {
         return None;
     }
-    let Some(name) = member_name(line) else {
-        return None;
-    };
+    let name = member_name(line)?;
     let mut above = at;
     while above > 0 {
         above = above.saturating_sub(1);
-        let Some(previous) = lines.get(above) else {
-            return None;
-        };
+        let previous = lines.get(above)?;
         let trimmed = previous.trim_start();
         if trimmed.starts_with("#[") {
             continue;
@@ -638,7 +614,7 @@ fn undocumented_member(lines: &[String], at: usize) -> Option<String> {
         }
         return Some(name);
     }
-    return Some(name);
+    Some(name)
 }
 
 /// Reports a refusal, naming the file and what the rewrite would have lost.
@@ -657,12 +633,12 @@ fn token_difference(original: &str, rewritten: &str) -> String {
     let after = tokens(rewritten);
     let lost: Vec<&String> = before
         .iter()
-        .filter(|token| return !after.contains(token))
+        .filter(|token| !after.contains(token))
         .take(4)
         .collect();
     let gained: Vec<&String> = after
         .iter()
-        .filter(|token| return !before.contains(token))
+        .filter(|token| !before.contains(token))
         .take(4)
         .collect();
     if lost.is_empty() && gained.is_empty() {
@@ -672,18 +648,18 @@ fn token_difference(original: &str, rewritten: &str) -> String {
             after.len()
         );
     }
-    return format!("would lose {lost:?} and gain {gained:?}");
+    format!("would lose {lost:?} and gain {gained:?}")
 }
 
 /// The identifiers and numbers a source carries, sorted, punctuation excluded.
 fn tokens(source: &str) -> Vec<String> {
     let mut found: Vec<String> = source
-        .split(|character: char| return !character.is_alphanumeric() && character != '_')
-        .filter(|piece| return !piece.is_empty())
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|piece| !piece.is_empty())
         .map(str::to_owned)
         .collect();
     found.sort_unstable();
-    return found;
+    found
 }
 
 #[cfg(test)]

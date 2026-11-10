@@ -18,20 +18,12 @@ use crate::discard;
 /// Returns an error if the root, checkout listing or directory entries cannot be read.
 #[inline]
 pub fn files(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let directory = match fs::canonicalize(root) {
-        Ok(path) => path,
-        Err(error) => return Err(error),
-    };
-    let allowed = match allowed_paths(&directory) {
-        Ok(paths) => paths,
-        Err(error) => return Err(error),
-    };
+    let directory = fs::canonicalize(root)?;
+    let allowed = allowed_paths(&directory)?;
     let mut found = Vec::new();
-    if let Err(error) = walk(&directory, allowed.as_ref(), &mut found) {
-        return Err(error);
-    }
+    walk(&directory, allowed.as_ref(), &mut found)?;
     found.sort();
-    return Ok(found);
+    Ok(found)
 }
 
 /// Restricts a checkout walk to the version-control candidate set.
@@ -39,14 +31,11 @@ pub fn files(root: &Path) -> io::Result<Vec<PathBuf>> {
 /// # Errors
 /// Returns an error if checkout metadata or the Git listing cannot be read.
 fn allowed_paths(root: &Path) -> io::Result<Option<BTreeSet<PathBuf>>> {
-    let checkout = match has_checkout(root) {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let checkout = has_checkout(root)?;
     if checkout {
         return git_paths(root).map(Some);
     }
-    return Ok(None);
+    Ok(None)
 }
 
 /// Checks whether the root lies inside a checkout.
@@ -61,7 +50,7 @@ fn has_checkout(root: &Path) -> io::Result<bool> {
             Err(error) => return Err(error),
         }
     }
-    return Ok(false);
+    Ok(false)
 }
 
 /// Reads the checkout's tracked and untracked-but-not-ignored paths.
@@ -69,7 +58,7 @@ fn has_checkout(root: &Path) -> io::Result<bool> {
 /// # Errors
 /// Returns an error if Git fails or a pathname cannot be decoded.
 fn git_paths(root: &Path) -> io::Result<BTreeSet<PathBuf>> {
-    let output = match Command::new("git")
+    let output = Command::new("git")
         .arg("-C")
         .arg(root)
         .args([
@@ -79,11 +68,7 @@ fn git_paths(root: &Path) -> io::Result<BTreeSet<PathBuf>> {
             "--others",
             "--exclude-standard",
         ])
-        .output()
-    {
-        Ok(output) => output,
-        Err(error) => return Err(error),
-    };
+        .output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
             "git ls-files failed in {}: {}",
@@ -92,8 +77,8 @@ fn git_paths(root: &Path) -> io::Result<BTreeSet<PathBuf>> {
         )));
     }
     let mut paths = BTreeSet::new();
-    let names = output.stdout.split(|byte| return *byte == 0);
-    for bytes in names.filter(|name| return !name.is_empty()) {
+    let names = output.stdout.split(|byte| *byte == 0);
+    for bytes in names.filter(|name| !name.is_empty()) {
         #[cfg(unix)]
         let path = listing_path(bytes);
         #[cfg(not(unix))]
@@ -103,14 +88,14 @@ fn git_paths(root: &Path) -> io::Result<BTreeSet<PathBuf>> {
         };
         discard(paths.insert(root.join(path)));
     }
-    return Ok(paths);
+    Ok(paths)
 }
 
 /// Decodes a NUL-delimited Git pathname without losing Unix filename bytes.
 #[cfg(unix)]
 fn listing_path(bytes: &[u8]) -> PathBuf {
     use std::os::unix::ffi::OsStringExt as _;
-    return PathBuf::from(OsString::from_vec(bytes.to_vec()));
+    PathBuf::from(OsString::from_vec(bytes.to_vec()))
 }
 
 /// Decodes a Git pathname on platforms requiring Unicode filenames.
@@ -130,7 +115,7 @@ fn listing_path(bytes: &[u8]) -> io::Result<PathBuf> {
 /// Returns an error if the root, checkout listing or directory entries cannot be read.
 #[inline]
 pub fn required(root: &Path) -> io::Result<Vec<PathBuf>> {
-    return files(root);
+    files(root)
 }
 
 /// Recurses through real directories, pruning those with no eligible paths.
@@ -142,16 +127,11 @@ fn walk(
     allowed: Option<&BTreeSet<PathBuf>>,
     found: &mut Vec<PathBuf>,
 ) -> io::Result<()> {
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) => return Err(error),
-    };
+    let entries = fs::read_dir(root)?;
     for result in entries {
-        if let Err(error) = walk_entry(result, allowed, found) {
-            return Err(error);
-        }
+        walk_entry(result, allowed, found)?;
     }
-    return Ok(());
+    Ok(())
 }
 
 /// Reads and visits one directory entry.
@@ -163,11 +143,8 @@ fn walk_entry(
     allowed: Option<&BTreeSet<PathBuf>>,
     found: &mut Vec<PathBuf>,
 ) -> io::Result<()> {
-    let entry = match result {
-        Ok(item) => item,
-        Err(error) => return Err(error),
-    };
-    return visit(&entry, allowed, found);
+    let entry = result?;
+    visit(&entry, allowed, found)
 }
 
 /// Visits one entry without following directory symlinks.
@@ -182,18 +159,15 @@ fn visit(
     if entry.file_name() == ".git" {
         return Ok(());
     }
-    let kind = match entry.file_type() {
-        Ok(kind) => kind,
-        Err(error) => return Err(error),
-    };
+    let kind = entry.file_type()?;
     let path = entry.path();
     if kind.is_dir() {
         return walk_allowed(&path, allowed, found);
     }
-    if !path.is_dir() && allowed.is_none_or(|paths| return paths.contains(&path)) {
+    if !path.is_dir() && allowed.is_none_or(|paths| paths.contains(&path)) {
         found.push(path);
     }
-    return Ok(());
+    Ok(())
 }
 
 /// Prunes directories containing no eligible paths before recursing.
@@ -205,13 +179,11 @@ fn walk_allowed(
     allowed: Option<&BTreeSet<PathBuf>>,
     found: &mut Vec<PathBuf>,
 ) -> io::Result<()> {
-    let eligible = allowed.is_none_or(|paths| {
-        return paths.iter().any(|file| return file.starts_with(path));
-    });
+    let eligible = allowed.is_none_or(|paths| paths.iter().any(|file| file.starts_with(path)));
     if eligible {
         return walk(path, allowed, found);
     }
-    return Ok(());
+    Ok(())
 }
 
 #[cfg(test)]

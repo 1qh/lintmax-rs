@@ -52,24 +52,19 @@ pub struct Gibberish {
 
 /// Whether a char can appear inside a rust identifier.
 const fn is_ident_char(ch: char) -> bool {
-    return ch == '_' || ch.is_ascii_alphanumeric();
+    ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 /// Extracts the binding name after a `let `/`fn `/`const ` keyword on a line.
 fn binding_name(line: &str, keyword: &str) -> Option<String> {
-    let Some(after_kw) = line.trim_start().strip_prefix(keyword) else {
-        return None;
-    };
+    let after_kw = line.trim_start().strip_prefix(keyword)?;
     let trimmed = after_kw.trim_start();
     let body = trimmed.strip_prefix("mut ").unwrap_or(trimmed);
-    let name: String = body
-        .chars()
-        .take_while(|ch| return is_ident_char(*ch))
-        .collect();
+    let name: String = body.chars().take_while(|ch| is_ident_char(*ch)).collect();
     if name.is_empty() {
         return None;
     }
-    return Some(name);
+    Some(name)
 }
 
 /// Detects consts in the same file sharing one string value.
@@ -79,10 +74,7 @@ fn binding_name(line: &str, keyword: &str) -> Option<String> {
 #[inline]
 pub fn dupconst() -> io::Result<Vec<DupConst>> {
     let mut by_value: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let texts = match sources() {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let texts = sources()?;
     for (_, text) in texts {
         collect_consts(&text, &mut by_value);
     }
@@ -94,7 +86,7 @@ pub fn dupconst() -> io::Result<Vec<DupConst>> {
             out.push(DupConst { names, value });
         }
     }
-    return Ok(out);
+    Ok(out)
 }
 
 /// Records every `const NAME = "value"` pair in one file's text.
@@ -114,14 +106,11 @@ fn collect_consts(text: &str, by_value: &mut BTreeMap<String, Vec<String>>) {
 #[inline]
 pub fn floatdiv() -> io::Result<Vec<FloatDiv>> {
     let mut out = Vec::new();
-    let texts = match sources() {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let texts = sources()?;
     for (file, text) in texts {
         collect_float_divs(&file, &text, &mut out);
     }
-    return Ok(out);
+    Ok(out)
 }
 
 /// Records each risky float-division site in one file's text.
@@ -150,7 +139,7 @@ pub fn format_floatdiv(issues: &[FloatDiv]) -> String {
         out.push_str(&issue.operand);
         out.push_str(" with no zero/empty guard \u{2014} NaN/Inf risk on empty input\n");
     }
-    return out;
+    out
 }
 
 /// Renders the duplicate-const advisory block, empty when none.
@@ -168,7 +157,7 @@ pub fn format_dupconst(issues: &[DupConst]) -> String {
         out.push_str(&issue.value);
         out.push_str("\" \u{2014} duplicate-value consts; collapse to one\n");
     }
-    return out;
+    out
 }
 
 /// Renders the gibberish-identifier advisory line, empty when none.
@@ -186,7 +175,7 @@ pub fn format_gibberish(issues: &[Gibberish]) -> String {
         out.push_str(&issue.name);
         out.push_str(" \u{2014} hash-gibberish identifier; rename to a self-documenting name\n");
     }
-    return out;
+    out
 }
 
 /// Detects hash-gibberish binding/function/const identifiers across source.
@@ -196,17 +185,14 @@ pub fn format_gibberish(issues: &[Gibberish]) -> String {
 #[inline]
 pub fn gibberish() -> io::Result<Vec<Gibberish>> {
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
-    let texts = match sources() {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let texts = sources()?;
     for (file, text) in texts {
         collect_gibberish(&file, &text, &mut seen);
     }
-    return Ok(seen
+    Ok(seen
         .into_iter()
-        .map(|(name, file)| return Gibberish { file, name })
-        .collect());
+        .map(|(name, file)| Gibberish { file, name })
+        .collect())
 }
 
 /// Records first-seen gibberish identifiers in one file's text.
@@ -229,7 +215,7 @@ fn gibberish_on_line(line: &str) -> Option<String> {
             return Some(name);
         }
     }
-    return None;
+    None
 }
 
 /// Whether a prefix ends inside a `"..."` string literal.
@@ -250,19 +236,19 @@ fn in_string_literal(prefix: &str) -> bool {
             escaped = false;
         }
     }
-    return open;
+    open
 }
 
 /// Whether a line carries an inline zero/empty guard for its denominator.
 fn is_guarded(line: &str) -> bool {
-    return line.contains("> 0")
+    line.contains("> 0")
         || line.contains(">0")
         || line.contains("== 0")
         || line.contains("!= 0")
         || line.contains("is_empty")
         || line.contains("max(1")
         || line.contains("NonZero")
-        || line.contains("checked_div");
+        || line.contains("checked_div")
 }
 
 /// Whether an identifier looks like a hash/gibberish token: a long no-underscore
@@ -274,50 +260,36 @@ fn looks_gibberish(name: &str) -> bool {
     if !name.chars().all(is_ident_char) {
         return false;
     }
-    let has_digit = name.chars().any(|ch| return ch.is_ascii_digit());
-    let has_upper = name.chars().any(|ch| return ch.is_ascii_uppercase());
-    let has_lower = name.chars().any(|ch| return ch.is_ascii_lowercase());
-    let digits = name.chars().filter(|ch| return ch.is_ascii_digit()).count();
+    let has_digit = name.chars().any(|ch| ch.is_ascii_digit());
+    let has_upper = name.chars().any(|ch| ch.is_ascii_uppercase());
+    let has_lower = name.chars().any(|ch| ch.is_ascii_lowercase());
+    let digits = name.chars().filter(char::is_ascii_digit).count();
     let dense = digits.saturating_mul(2) >= name.len();
-    return has_digit && has_upper && has_lower && dense;
+    has_digit && has_upper && has_lower && dense
 }
 
 /// Pulls a `const NAME: T = "value";` name/value pair out of one line.
 fn parse_const(line: &str) -> Option<(String, String)> {
-    let Some(trimmed) = line.trim_start().strip_prefix("const ") else {
-        return None;
-    };
-    let Some((raw_name, rest)) = trimmed.split_once(':') else {
-        return None;
-    };
+    let trimmed = line.trim_start().strip_prefix("const ")?;
+    let (raw_name, rest) = trimmed.split_once(':')?;
     let name = raw_name.trim();
     if name.is_empty() || !name.chars().all(is_ident_char) {
         return None;
     }
-    let Some(value) = const_value(rest) else {
-        return None;
-    };
+    let value = const_value(rest)?;
     if value.len() < MIN_VALUE_LEN {
         return None;
     }
-    return Some((name.to_owned(), value));
+    Some((name.to_owned(), value))
 }
 
 /// Extracts the first `"..."` literal value from the right side of a const.
 fn const_value(rest: &str) -> Option<String> {
-    let Some((_, after_eq)) = rest.split_once('=') else {
-        return None;
-    };
-    let Some(open) = after_eq.find('"') else {
-        return None;
-    };
-    let Some(body) = after_eq.get(open.saturating_add(1)..) else {
-        return None;
-    };
-    let Some(close) = body.find('"') else {
-        return None;
-    };
-    return body.get(..close).map(str::to_owned);
+    let (_, after_eq) = rest.split_once('=')?;
+    let open = after_eq.find('"')?;
+    let body = after_eq.get(open.saturating_add(1)..)?;
+    let close = body.find('"')?;
+    body.get(..close).map(str::to_owned)
 }
 
 /// Returns the unguarded denominator text when a line divides a float by a
@@ -331,9 +303,7 @@ fn risky_float_div(line: &str) -> Option<String> {
     if !is_float || !trimmed.contains('/') {
         return None;
     }
-    let Some((before, after)) = trimmed.split_once('/') else {
-        return None;
-    };
+    let (before, after) = trimmed.split_once('/')?;
     if in_string_literal(before) || is_guarded(trimmed) {
         return None;
     }
@@ -348,7 +318,7 @@ fn risky_float_div(line: &str) -> Option<String> {
         .split([',', ';'])
         .next()
         .unwrap_or(denom);
-    return Some(head.trim().to_owned());
+    Some(head.trim().to_owned())
 }
 
 /// Hand-written rust source files under `src/` (the gate's scan scope).
@@ -357,28 +327,20 @@ fn risky_float_div(line: &str) -> Option<String> {
 /// Returns an error if the root or eligible source paths cannot be read.
 #[inline]
 pub fn source_files() -> io::Result<Vec<PathBuf>> {
-    let root = match fs::canonicalize(".") {
-        Ok(directory) => directory,
-        Err(error) => return Err(error),
-    };
-    let paths = match required(&root) {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
-    return Ok(paths
+    let root = fs::canonicalize(".")?;
+    let paths = required(&root)?;
+    Ok(paths
         .into_iter()
-        .filter(|path| return is_source(path, &root))
-        .collect());
+        .filter(|path| is_source(path, &root))
+        .collect())
 }
 
 /// Whether a candidate is a Rust source file under the scan root's `src/`.
 fn is_source(path: &Path, root: &Path) -> bool {
-    return path
-        .extension()
-        .is_some_and(|extension| return extension == "rs")
+    path.extension().is_some_and(|extension| extension == "rs")
         && path
             .strip_prefix(root)
-            .is_ok_and(|relative| return relative.starts_with("src"));
+            .is_ok_and(|relative| relative.starts_with("src"))
 }
 
 /// Reads each source file's `(path, text)`, skipping unreadable entries.
@@ -386,17 +348,14 @@ fn is_source(path: &Path, root: &Path) -> bool {
 /// # Errors
 /// Returns an error if source file enumeration fails.
 fn sources() -> io::Result<Vec<(String, String)>> {
-    let paths = match source_files() {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let paths = source_files()?;
     let mut out = Vec::new();
     for path in paths {
         if let Ok(text) = fs::read_to_string(&path) {
             out.push((path.display().to_string(), text));
         }
     }
-    return Ok(out);
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -30,9 +30,9 @@ fn fixture() -> Fixture {
         NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
     ));
     drop(fs::create_dir_all(&root));
-    return Fixture {
+    Fixture {
         root: fs::canonicalize(&root).unwrap_or(root),
-    };
+    }
 }
 
 /// Runs Git only when the test executes.
@@ -41,10 +41,7 @@ fn fixture() -> Fixture {
 /// If Git cannot run or rejects the command.
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git").arg("-C").arg(root).args(args).output();
-    let code = output
-        .as_ref()
-        .ok()
-        .and_then(|result| return result.status.code());
+    let code = output.as_ref().ok().and_then(|result| result.status.code());
     assert_eq!(
         code,
         Some(0_i32),
@@ -60,7 +57,7 @@ fn broken_checkout_fails() {
     drop(fs::create_dir_all(fixture.root.join(".git")));
     drop(fs::write(fixture.root.join("ignored.rs"), "ignored"));
     assert_eq!(
-        files(&fixture.root).err().map(|error| return error.kind()),
+        files(&fixture.root).err().map(|error| error.kind()),
         Some(io::ErrorKind::Other)
     );
 }
@@ -72,7 +69,7 @@ fn enumeration_errors_reach_the_caller() {
     let fixture = fixture();
     let reason = required(&fixture.root.join("missing"))
         .err()
-        .map(|error| return error.kind());
+        .map(|error| error.kind());
     assert_eq!(reason, Some(io::ErrorKind::NotFound));
 }
 

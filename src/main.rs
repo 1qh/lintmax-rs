@@ -13,6 +13,7 @@ pub mod state;
 use alloc::collections::BTreeSet;
 use core::{
     cell::RefCell,
+    fmt::Write as _,
     iter,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -35,20 +36,22 @@ thread_local! {
     static CHECK_CONFIGS: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
-/// Clippy lints to allow (contradicting pairs, impractical restrictions, and
-/// duplicates of a sibling stage that gates the same class more precisely).
+/// Clippy lints allowed to resolve conflicts and impractical restrictions.
+///
+/// A restriction lint gives way to a conflicting default or pedantic lint.
+/// Sibling stages cover duplicate checks more precisely.
 #[rustfmt::skip]
 const CLIPPY_ALLOW: &[&str] = &[
     "clippy::blanket_clippy_restriction_lints",
     "clippy::cognitive_complexity",
     "clippy::float_arithmetic",
+    "clippy::implicit_return",
     "clippy::multiple_crate_versions",
-    "clippy::needless_return",
     "clippy::pub_with_shorthand",
+    "clippy::question_mark_used",
     "clippy::redundant_pub_crate",
     "clippy::ref_patterns",
     "clippy::self_named_module_files",
-    "clippy::semicolon_if_nothing_returned",
     "clippy::semicolon_outside_block",
     "clippy::separated_literal_suffix",
     "clippy::single_call_fn",
@@ -320,9 +323,9 @@ impl ToolExecution for Command {
     /// Returns the underlying error if the required file or child process cannot be read or
     /// started.
     fn tool_output(&mut self) -> io::Result<Output> {
-        return self.output().inspect_err(|error| {
-            return spawn_failure(self.get_program(), error, &mut io::stderr());
-        });
+        self.output().inspect_err(|error| {
+            spawn_failure(self.get_program(), error, &mut io::stderr());
+        })
     }
 
     /// Inherits output while reporting a spawn error.
@@ -331,9 +334,9 @@ impl ToolExecution for Command {
     /// Returns the underlying error if the required file or child process cannot be read or
     /// started.
     fn tool_status(&mut self) -> io::Result<ExitStatus> {
-        return self.status().inspect_err(|error| {
-            return spawn_failure(self.get_program(), error, &mut io::stderr());
-        });
+        self.status().inspect_err(|error| {
+            spawn_failure(self.get_program(), error, &mut io::stderr());
+        })
     }
 }
 
@@ -342,7 +345,6 @@ fn advisory(prefix: &str, body: &str) {
     if !body.is_empty() {
         discard(write!(io::stderr(), "advisory: {prefix}{body}"));
     }
-    return;
 }
 
 /// Builds a binary-only clippy pass with the shared flags and binary lint.
@@ -357,14 +359,14 @@ fn binary_lint_args(mode: LintMode) -> Vec<String> {
     arguments.extend(["--quiet".to_owned(), "--".to_owned()]);
     arguments.extend(build_lint_args());
     arguments.extend(["-F".to_owned(), "dead_code_pub_in_binary".to_owned()]);
-    return arguments;
+    arguments
 }
 
 /// Cached availability of the optional prebuilt installer.
 fn binstall_available() -> bool {
     /// Cached result of the single optional-installer probe.
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    return *AVAILABLE.get_or_init(|| return installed("cargo-binstall"));
+    *AVAILABLE.get_or_init(|| installed("cargo-binstall"))
 }
 
 /// Builds clippy lint flags.
@@ -386,7 +388,7 @@ fn build_lint_args() -> Vec<String> {
         args.push("-A".into());
         args.push((*lint).into());
     }
-    return args;
+    args
 }
 
 /// Rewrites the written dprint config's plugin URLs to latest so the embedded
@@ -398,7 +400,6 @@ fn bump_dprint_plugins() {
     {
         discard(fs::write(&path, bumped));
     }
-    return;
 }
 
 /// Computes the local cache key, bypassing the cache under CI.
@@ -410,11 +411,8 @@ fn cache_key() -> io::Result<Option<String>> {
         return Ok(None);
     }
     let external = env::var_os("LINTMAX_EXCEPTIONS").map(PathBuf::from);
-    let version = match cache_version(external.as_deref()) {
-        Ok(identity) => identity,
-        Err(error) => return Err(error),
-    };
-    return state::tree_hash(&version).map(Some);
+    let version = cache_version(external.as_deref())?;
+    state::tree_hash(&version).map(Some)
 }
 
 /// Includes external exception contents in the green-cache identity.
@@ -425,17 +423,16 @@ fn cache_version(external: Option<&Path>) -> io::Result<String> {
     let Some(path) = external else {
         return Ok(pkg_version().to_owned());
     };
-    return fs::read_to_string(path).map(|content| {
-        return format!("{}:{}:{content}", pkg_version(), path.display());
-    });
+    fs::read_to_string(path)
+        .map(|content| format!("{}:{}:{content}", pkg_version(), path.display()))
 }
 
 /// Whether this directory already passed with the current content identity.
 fn cached_green(key: Option<&String>) -> bool {
-    return match (key, state::cwd_key()) {
+    match (key, state::cwd_key()) {
         (Some(hash), Some(cwd)) => state::load().last_green_by_cwd.get(&cwd) == Some(hash),
         _ => false,
-    };
+    }
 }
 
 /// Writes embedded configs outside the project, without installing or refreshing.
@@ -450,33 +447,31 @@ fn check_configs() -> io::Result<PathBuf> {
         process::id(),
         SERIAL.fetch_add(1, Ordering::Relaxed)
     ));
-    if let Err(error) = fs::create_dir_all(&directory) {
-        return Err(error);
-    }
+    fs::create_dir_all(&directory)?;
     if let Err(error) = write_check_configs(&directory) {
         discard(fs::remove_dir_all(&directory));
         return Err(error);
     }
-    return Ok(directory);
+    Ok(directory)
 }
 
 /// Selects the embedded config with the project's declared exceptions.
 fn check_content(name: &str, content: &str) -> String {
-    return match name {
+    match name {
         "deny.toml" => deny_with_exceptions(content),
         "dprint.json" => dprint_with_generated(content),
         "typos.toml" => typos_with_exceptions(content),
         _ => content.to_owned(),
-    };
+    }
 }
 
 /// Whether this thread is running a read-only verification.
 fn checking() -> bool {
-    return CHECK_CONFIGS.with(|directory| return directory.borrow().is_some());
+    CHECK_CONFIGS.with(|directory| return directory.borrow().is_some())
 }
 
 /// Removes temporary config files lintmax owns: an exact embedded match, or a
-/// dprint.json that is the embedded default with only its plugin versions bumped.
+/// dprint.json with the same settings and plugins, regardless of versions or source.
 fn clean_configs() {
     for &(name, content) in MANAGED_CONFIGS {
         let path = config_path(name);
@@ -489,12 +484,11 @@ fn clean_configs() {
             discard(fs::remove_file(path));
         }
     }
-    return;
 }
 
 /// Runs an external command.
 fn cmd(program: &str, args: &[&str]) -> ExitCode {
-    return cmd_env(program, args, &[]);
+    cmd_env(program, args, &[])
 }
 
 /// Runs an external command with environment variables.
@@ -505,11 +499,11 @@ fn cmd_env(program: &str, args: &[&str], env_vars: &[(&str, &str)]) -> ExitCode 
     for &(key, val) in env_vars {
         discard(command.env(key, val));
     }
-    return match command.tool_status() {
+    match command.tool_status() {
         Ok(status) if status.success() => ExitCode::SUCCESS,
         Ok(status) => ExitCode::from(u8::try_from(status.code().unwrap_or(1)).unwrap_or(1)),
         Err(_) => ExitCode::FAILURE,
-    };
+    }
 }
 
 /// Runs a command, buffering its output; prints captured stdout+stderr only on
@@ -518,7 +512,7 @@ fn cmd_quiet(program: &str, args: &[&str]) -> ExitCode {
     let mut command = tool_command(program);
     command_args(&mut command, program, args);
     let output = command.tool_output();
-    return match output {
+    match output {
         Ok(out) if out.status.success() => ExitCode::SUCCESS,
         Ok(out) => {
             discard(io::stdout().write_all(&out.stdout));
@@ -526,7 +520,7 @@ fn cmd_quiet(program: &str, args: &[&str]) -> ExitCode {
             ExitCode::from(u8::try_from(out.status.code().unwrap_or(1)).unwrap_or(1))
         },
         Err(_) => ExitCode::FAILURE,
-    };
+    }
 }
 
 /// Every dependency name declared by a workspace package in cargo metadata.
@@ -536,14 +530,14 @@ fn collect_dep_names(meta: &Value) -> BTreeSet<String> {
     let arrays = packages
         .into_iter()
         .flatten()
-        .filter_map(|pkg| return pkg.get("dependencies"))
+        .filter_map(|pkg| pkg.get("dependencies"))
         .filter_map(Value::as_array);
     for dep in arrays.flatten() {
         if let Some(name) = dep.get("name").and_then(Value::as_str) {
             discard(set.insert(name.to_owned()));
         }
     }
-    return set;
+    set
 }
 
 /// Preserves child arguments while requiring locked resolution during checks.
@@ -551,18 +545,15 @@ fn command_args(command: &mut Command, program: &str, arguments: &[&str]) {
     let locked = checking()
         && program == "cargo"
         && arguments.first().is_some_and(|subcommand| {
-            return matches!(*subcommand, "clippy" | "doc" | "hack" | "nextest" | "test");
+            matches!(*subcommand, "clippy" | "doc" | "hack" | "nextest" | "test")
         });
-    let separator = arguments
-        .iter()
-        .position(|argument| return *argument == "--");
+    let separator = arguments.iter().position(|argument| *argument == "--");
     let position = separator.unwrap_or(arguments.len());
     discard(command.args(arguments.get(..position).unwrap_or_default()));
     if locked {
         discard(command.arg("--locked"));
     }
     discard(command.args(arguments.get(position..).unwrap_or_default()));
-    return;
 }
 
 /// Directs checking cargo children to the isolated clippy configuration.
@@ -573,7 +564,6 @@ fn command_check_env(command: &mut Command, program: &str) {
             discard(command.env("CLIPPY_CONF_DIR", parent));
         }
     }
-    return;
 }
 
 /// Returns path for a config file name.
@@ -582,12 +572,12 @@ fn config_path(name: &str) -> PathBuf {
     if local.exists() {
         return local;
     }
-    return CHECK_CONFIGS.with(|directory| {
+    CHECK_CONFIGS.with(|directory| {
         return directory
             .borrow()
             .as_ref()
-            .map_or(local, |root| return root.join(name));
-    });
+            .map_or(local, |root| root.join(name));
+    })
 }
 
 /// Folds the project's exceptions into the embedded cargo-deny configuration.
@@ -595,27 +585,25 @@ fn config_path(name: &str) -> PathBuf {
 /// Each list is substituted INTO its owning section rather than appended to the
 /// file, because a bare append lands in whichever section happens to be last.
 fn deny_with_exceptions(content: &str) -> String {
-    return merge_exceptions(content, &project_exceptions());
+    merge_exceptions(content, &project_exceptions())
 }
 
 /// Discards a result, satisfying must-use and drop lints.
-fn discard<T>(_value: T) {
-    return;
-}
+fn discard<T>(_value: T) {}
 
 /// Dispatches commands without touching the project for informational commands.
 fn dispatch(command: Option<&Sub>, check: fn() -> ExitCode, fix: fn() -> ExitCode) -> ExitCode {
     match command {
-        Some(&Sub::Check) => return check(),
+        Some(&Sub::Check) => check(),
         Some(&Sub::Version) => {
             emit(pkg_version());
-            return ExitCode::SUCCESS;
+            ExitCode::SUCCESS
         },
         Some(&Sub::Rules) => {
             print_rules();
-            return ExitCode::SUCCESS;
+            ExitCode::SUCCESS
         },
-        None | Some(&Sub::Fix) => return finish_fix(fix),
+        None | Some(&Sub::Fix) => finish_fix(fix),
     }
 }
 
@@ -623,7 +611,6 @@ fn dispatch(command: Option<&Sub>, check: fn() -> ExitCode, fix: fn() -> ExitCod
 fn do_refresh() {
     discard(cmd_quiet("cargo", &["update"]));
     discard(cmd_quiet("dprint", &["config", "update"]));
-    return;
 }
 
 /// Builds a formatter command while preserving its explicit file arguments.
@@ -633,7 +620,7 @@ fn dprint_command(action: &str, patterns: &[String]) -> Command {
     if checking() {
         discard(command.arg("--config").arg(config_path("dprint.json")));
     }
-    return command;
+    command
 }
 
 /// Converts eligible filenames into literal dprint glob arguments.
@@ -641,17 +628,17 @@ fn dprint_command(action: &str, patterns: &[String]) -> Command {
 /// # Errors
 /// Returns an error if a filename cannot be represented as UTF-8.
 fn dprint_patterns(paths: &[PathBuf]) -> io::Result<Vec<String>> {
-    return paths
+    paths
         .iter()
         .map(|path| {
-            return path.to_str().map(literal_glob).ok_or_else(|| {
-                return io::Error::new(
+            path.to_str().map(literal_glob).ok_or_else(|| {
+                io::Error::new(
                     io::ErrorKind::InvalidData,
                     "dprint cannot safely select a non-UTF-8 filename",
-                );
-            });
+                )
+            })
         })
-        .collect();
+        .collect()
 }
 
 /// Folds the project's generated paths into the embedded formatter excludes.
@@ -664,15 +651,15 @@ fn dprint_with_generated(content: &str) -> String {
     if generated.is_empty() {
         return content.to_owned();
     }
-    let added = generated
-        .iter()
-        .map(|path| return format!("    \"{path}\",\n"))
-        .collect::<String>();
-    return content.replacen(
+    let mut added = String::new();
+    for path in &generated {
+        discard(writeln!(added, "    \"{path}\","));
+    }
+    content.replacen(
         "  \"excludes\": [\n",
         &format!("  \"excludes\": [\n{added}"),
         1,
-    );
+    )
 }
 
 /// Duplicate crate names when every cargo-deny error is a duplicate; None if any other error
@@ -689,12 +676,12 @@ fn duplicate_only_failures(stderr: &str) -> Option<Vec<String>> {
         let name = line
             .split("for crate '")
             .nth(1)
-            .and_then(|rest| return rest.split('\'').next());
+            .and_then(|rest| rest.split('\'').next());
         if let Some(found) = name {
             dups.push(found.to_owned());
         }
     }
-    return Some(dups);
+    Some(dups)
 }
 
 /// Writes a line to stdout and flushes.
@@ -702,7 +689,6 @@ fn emit(line: &str) {
     let mut stdout = io::stdout();
     discard(writeln!(stdout, "{line}"));
     discard(stdout.flush());
-    return;
 }
 
 /// Ensures the active toolchain carries one rustup component.
@@ -715,12 +701,11 @@ fn ensure_active_component(probe: &[&str], component: &str) {
     let present = tool_command("cargo")
         .args(probe)
         .tool_output()
-        .is_ok_and(|out| return out.status.success());
+        .is_ok_and(|out| out.status.success());
     if present {
         return;
     }
     discard(cmd_quiet("rustup", &["component", "add", component]));
-    return;
 }
 
 /// Ensures every active-toolchain component a gate stage shells out to is present.
@@ -730,13 +715,11 @@ fn ensure_active_component(probe: &[&str], component: &str) {
 fn ensure_active_components() {
     ensure_active_component(&["fmt", "--version"], "rustfmt");
     ensure_active_component(&["clippy", "--version"], "clippy");
-    return;
 }
 
 /// Requests nightly formatting support before the gate starts.
 fn ensure_nightly_rustfmt() {
     discard(require_nightly_rustfmt());
-    return;
 }
 
 /// Installs one cargo tool when its binary is absent.
@@ -761,7 +744,6 @@ fn ensure_tool(bin: &str, krate: &str) {
         run: cmd_quiet,
     };
     ensure_tool_with(bin, krate, &installer);
-    return;
 }
 
 /// Installs a tool through a probed installer, with injectable process operations.
@@ -776,7 +758,6 @@ fn ensure_tool_with(bin: &str, krate: &str, installer: &ToolInstaller) {
             "lintmax: could not install {krate}, so {bin} is unavailable"
         ));
     }
-    return;
 }
 
 /// Installs any absent cargo child tool the gate shells out to.
@@ -794,7 +775,6 @@ fn ensure_tools() {
     ] {
         ensure_tool(bin, krate);
     }
-    return;
 }
 
 /// Reports why file enumeration failed and fails the current gate stage.
@@ -803,18 +783,18 @@ fn enumeration_failure(error: &io::Error) -> ExitCode {
         io::stderr(),
         "lintmax: file enumeration failed: {error}"
     ));
-    return ExitCode::FAILURE;
+    ExitCode::FAILURE
 }
 
 /// Reports an exception file error and fails before any gate work.
 fn exception_failure(error: &io::Error) -> ExitCode {
     discard(writeln!(io::stderr(), "lintmax: {error}"));
-    return ExitCode::FAILURE;
+    ExitCode::FAILURE
 }
 
 /// Adds the selected exception path while preserving the IO error kind.
 fn exception_path_error(path: &Path, error: &io::Error) -> io::Error {
-    return io::Error::new(error.kind(), format!("{}: {error}", path.display()));
+    io::Error::new(error.kind(), format!("{}: {error}", path.display()))
 }
 
 /// Checks that a candidate is an executable file, rather than a PATH decoy.
@@ -825,8 +805,7 @@ fn executable(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        return fs::metadata(path)
-            .is_ok_and(|metadata| return metadata.permissions().mode() & 0o111 != 0);
+        fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
     }
     #[cfg(not(unix))]
     {
@@ -841,20 +820,18 @@ fn filter_project_files(
     excludes: &[PathBuf],
     generated: &[String],
 ) -> Vec<PathBuf> {
-    return paths
+    paths
         .into_iter()
         .filter(|path| {
             let owned = path.strip_prefix(root).ok().and_then(Path::to_str);
-            return !excludes
-                .iter()
-                .any(|exclude| return path.starts_with(exclude))
+            !excludes.iter().any(|exclude| path.starts_with(exclude))
                 && !owned.is_some_and(|relative| {
-                    return generated
+                    generated
                         .iter()
-                        .any(|pattern| return generated_glob_matches(pattern, relative));
-                });
+                        .any(|pattern| generated_glob_matches(pattern, relative))
+                })
         })
-        .collect();
+        .collect()
 }
 
 /// Prints success after the requested fix completes.
@@ -863,7 +840,7 @@ fn finish_fix(fix: fn() -> ExitCode) -> ExitCode {
     if result == ExitCode::SUCCESS {
         emit("ok");
     }
-    return result;
+    result
 }
 
 /// Names every first-party (workspace) crate depends on directly, via cargo metadata.
@@ -877,13 +854,10 @@ fn first_party_direct_deps() -> io::Result<BTreeSet<String>> {
         discard(command.arg("--locked"));
     }
     let output = command.tool_output();
-    let out = match output {
-        Ok(captured) => captured,
-        Err(error) => return Err(error),
-    };
-    return Ok(serde_json::from_slice::<Value>(&out.stdout)
-        .map(|meta| return collect_dep_names(&meta))
-        .unwrap_or_default());
+    let out = output?;
+    Ok(serde_json::from_slice::<Value>(&out.stdout)
+        .map(|meta| collect_dep_names(&meta))
+        .unwrap_or_default())
 }
 
 /// Matches root-relative generated globs, with recursive directory wildcards.
@@ -904,26 +878,24 @@ fn generated_glob_matches(declared: &str, path: &str) -> bool {
         }
         return path
             .char_indices()
-            .map(|(offset, _)| return offset)
+            .map(|(offset, _)| offset)
             .chain(iter::once(path.len()))
             .take_while(|offset| {
-                return recursive || !path.get(..*offset).unwrap_or_default().contains('/');
+                recursive || !path.get(..*offset).unwrap_or_default().contains('/')
             })
-            .any(|offset| {
-                return generated_glob_matches(suffix, path.get(offset..).unwrap_or_default());
-            });
+            .any(|offset| generated_glob_matches(suffix, path.get(offset..).unwrap_or_default()));
     }
     let Some(first) = path.chars().next() else {
         return false;
     };
-    return (character == first || (character == '?' && first != '/'))
-        && generated_glob_matches(remaining, path.get(first.len_utf8()..).unwrap_or_default());
+    (character == first || (character == '?' && first != '/'))
+        && generated_glob_matches(remaining, path.get(first.len_utf8()..).unwrap_or_default())
 }
 
 /// Whether the gate runs under CI (where the green-cache is bypassed so a fresh
 /// run always validates).
 fn in_ci() -> bool {
-    return env::var("CI").is_ok() || env::var("GITHUB_ACTIONS").is_ok();
+    env::var("CI").is_ok() || env::var("GITHUB_ACTIONS").is_ok()
 }
 
 /// Attempts prebuilt installation, falling back to the original cargo install argv.
@@ -944,7 +916,6 @@ fn install_missing_tool(bin: &str, krate: &str, installer: &ToolInstaller) {
         install.push(krate);
         discard((installer.run)("cargo", &install));
     }
-    return;
 }
 
 /// Whether a child tool's binary answers on the current path.
@@ -952,34 +923,36 @@ fn installed(bin: &str) -> bool {
     if !bin.starts_with("cargo-") && resolve_tool(bin).is_none() {
         return false;
     }
-    return installed_command(bin)
+    installed_command(bin)
         .tool_output()
-        .is_ok_and(|out| return out.status.success());
+        .is_ok_and(|out| out.status.success())
 }
 
 /// Builds a version probe using cargo's subcommand convention when applicable.
 fn installed_command(bin: &str) -> Command {
     let mut command = bin.strip_prefix("cargo-").map_or_else(
-        || return tool_command(bin),
+        || tool_command(bin),
         |subcommand| {
             let mut cargo = tool_command("cargo");
             discard(cargo.arg(subcommand));
-            return cargo;
+            cargo
         },
     );
     discard(command.arg("--version"));
-    return command;
+    command
 }
 
-/// Whether the file is the embedded dprint.json with only plugin versions changed.
+/// Whether settings and plugin identities match the embedded dprint configuration.
 fn is_bumped_dprint(path: &Path, embedded: &str) -> bool {
-    return fs::read_to_string(path)
-        .is_ok_and(|content| return normalize_dprint(&content) == normalize_dprint(embedded));
+    fs::read_to_string(path).is_ok_and(|content| {
+        normalize_dprint(&content)
+            .is_some_and(|normalized| Some(normalized) == normalize_dprint(embedded))
+    })
 }
 
 /// Checks if file content matches expected embedded content.
 fn is_lintmax_content(path: &Path, expected: &str) -> bool {
-    return fs::read_to_string(path).map_or(true, |content| return content == expected);
+    fs::read_to_string(path).map_or(true, |content| content == expected)
 }
 
 /// Whether the file is the embedded rustfmt.toml, optionally carrying the
@@ -992,15 +965,13 @@ fn is_lintmax_rustfmt(path: &Path) -> bool {
         .split(RUSTFMT_IGNORE_MARKER)
         .next()
         .unwrap_or(&content);
-    return head == RUSTFMT_TOML;
+    head == RUSTFMT_TOML
 }
 
 /// Whether a candidate has a shell extension or a shell shebang.
 fn is_shell(path: &Path) -> bool {
-    return path
-        .extension()
-        .is_some_and(|extension| return extension == "sh")
-        || fs::read_to_string(path).is_ok_and(|text| return shell_shebang(&text));
+    path.extension().is_some_and(|extension| extension == "sh")
+        || fs::read_to_string(path).is_ok_and(|text| shell_shebang(&text))
 }
 
 /// True when a package is local (path/null source) and not a workspace member:
@@ -1010,8 +981,8 @@ fn is_vendored_package(pkg: &Value, members: &BTreeSet<String>) -> bool {
     let member = pkg
         .get("id")
         .and_then(Value::as_str)
-        .is_some_and(|id| return members.contains(id));
-    return local && !member;
+        .is_some_and(|id| members.contains(id));
+    local && !member
 }
 
 /// Escapes a literal filename for dprint's glob arguments.
@@ -1023,7 +994,7 @@ fn literal_glob(text: &str) -> String {
         }
         pattern.push(character);
     }
-    return pattern;
+    pattern
 }
 
 /// Loads both exception files, requiring the explicitly selected file to be readable.
@@ -1032,21 +1003,21 @@ fn literal_glob(text: &str) -> String {
 /// Returns the underlying error if the required file or child process cannot be read or started.
 fn load_project_exceptions() -> io::Result<Exceptions> {
     let external = env::var_os("LINTMAX_EXCEPTIONS").map(PathBuf::from);
-    return read_exceptions(Path::new(EXCEPTIONS_FILE), external.as_deref());
+    read_exceptions(Path::new(EXCEPTIONS_FILE), external.as_deref())
 }
 
 /// Builds the bare machete invocation without an extra subcommand argument.
 fn machete_command(paths: &[PathBuf]) -> Command {
     let mut command = tool_command("cargo-machete");
     discard(command.args(paths));
-    return command;
+    command
 }
 
 /// Entry point.
 fn main() -> ExitCode {
     let Cargo::Lintmax(cli) = Cargo::parse();
 
-    return dispatch(cli.command.as_ref(), run_default, run_fix);
+    dispatch(cli.command.as_ref(), run_default, run_fix)
 }
 
 /// Substitutes declared exceptions into the config's own sections.
@@ -1055,23 +1026,22 @@ fn main() -> ExitCode {
 /// because a bare append lands in whichever section happens to be last.
 fn merge_exceptions(content: &str, declared: &Exceptions) -> String {
     let with_advisories = substitute(content, "ignore = []", &declared.advisories, |body| {
-        return format!("ignore = [\n{body}\n]");
+        format!("ignore = [\n{body}\n]")
     });
-    return substitute(
+    substitute(
         &with_advisories,
         "multiple-versions = \"deny\"",
         &declared.duplicates,
-        |body| return format!("multiple-versions = \"deny\"\nskip = [\n{body}\n]"),
-    );
+        |body| format!("multiple-versions = \"deny\"\nskip = [\n{body}\n]"),
+    )
 }
 
 /// Extends spelling exclusions and vocabulary while preserving the embedded checks.
 fn merge_typos_exceptions(content: &str, declared: &Exceptions) -> String {
-    let excluded = declared
-        .generated
-        .iter()
-        .map(|path| return format!("{}, ", toml::Value::String(path.clone())))
-        .collect::<String>();
+    let mut excluded = String::new();
+    for path in &declared.generated {
+        discard(write!(excluded, "{}, ", toml::Value::String(path.clone())));
+    }
     let mut merged = content.replacen(
         "extend-exclude = [",
         &format!("extend-exclude = [{excluded}"),
@@ -1088,7 +1058,7 @@ fn merge_typos_exceptions(content: &str, declared: &Exceptions) -> String {
             merged.push('\n');
         }
     }
-    return merged;
+    merged
 }
 
 /// Resolves the nightly rustfmt binary path used for strict (nightly-only) options.
@@ -1109,42 +1079,55 @@ fn nightly_rustfmt() -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    return Some(trimmed.to_owned());
+    Some(trimmed.to_owned())
 }
 
-/// Drops the `-<version>` segment from every dprint plugin URL so a bumped
-/// config compares equal to the embedded seed.
-fn normalize_dprint(text: &str) -> String {
-    return text
-        .lines()
-        .map(normalize_dprint_line)
-        .collect::<Vec<_>>()
-        .join("\n");
+/// Compares settings structurally, ignoring plugin order, versions and source syntax.
+fn normalize_dprint(text: &str) -> Option<Value> {
+    let mut config: Value = serde_json::from_str(text).ok()?;
+    let plugins = config.get_mut("plugins")?.as_array_mut()?;
+    let mut names = plugins
+        .iter()
+        .map(|plugin| plugin.as_str().map(normalize_dprint_plugin))
+        .collect::<Option<Vec<_>>>()?;
+    names.sort_unstable();
+    *plugins = names.into_iter().map(Value::String).collect();
+    Some(config)
 }
 
-/// Strips the version segment from a single dprint plugin URL line.
-fn normalize_dprint_line(line: &str) -> String {
-    let is_plugin = line
-        .trim_start()
-        .starts_with("\"https://plugins.dprint.dev/");
-    if let (true, Some(start)) = (is_plugin, line.rfind('/')) {
-        return line.get(..=start).unwrap_or(line).to_owned();
+/// Maps each legacy plugin URL and its npm package to the same unversioned identity.
+fn normalize_dprint_plugin(plugin: &str) -> String {
+    for (url, npm) in [
+        ("json", "@dprint/json"),
+        ("markdown", "@dprint/markdown"),
+        ("toml", "@dprint/toml"),
+        ("dockerfile", "@dprint/dockerfile"),
+        ("g-plane/pretty_yaml", "dprint-plugin-yaml"),
+        ("g-plane/malva", "dprint-plugin-malva"),
+        ("g-plane/markup_fmt", "dprint-plugin-markup"),
+        ("g-plane/pretty_graphql", "dprint-plugin-graphql"),
+        ("bartlomieju/lax-sql", "lax-sql"),
+    ] {
+        let legacy = plugin
+            .strip_prefix(&format!("https://plugins.dprint.dev/{url}-"))
+            .and_then(|version| version.strip_suffix(".wasm"));
+        let package = plugin.strip_prefix(&format!("npm:{npm}@"));
+        if legacy
+            .or(package)
+            .is_some_and(|version| !version.is_empty())
+        {
+            return npm.to_owned();
+        }
     }
-    return line.to_owned();
+    plugin.to_owned()
 }
 
 /// The `dir/**` exclude glob for a package's directory, relative to cwd.
 fn package_dir_glob(pkg: &Value, cwd: &Path) -> Option<String> {
-    let manifest = match pkg.get("manifest_path").and_then(Value::as_str) {
-        Some(text) => text,
-        None => return None,
-    };
-    let dir = match Path::new(manifest).parent() {
-        Some(parent) => parent,
-        None => return None,
-    };
+    let manifest = pkg.get("manifest_path").and_then(Value::as_str)?;
+    let dir = Path::new(manifest).parent()?;
     let rel = dir.strip_prefix(cwd).unwrap_or(dir);
-    return Some(format!("{}/**", rel.display()));
+    Some(format!("{}/**", rel.display()))
 }
 
 /// Records the current tree-hash as the cwd's last green run.
@@ -1154,12 +1137,11 @@ fn persist_green(hash: Option<&String>) {
         discard(st.last_green_by_cwd.insert(cwd, digest.clone()));
         st.save();
     }
-    return;
 }
 
 /// Cargo package version, baked in at compile time.
 const fn pkg_version() -> &'static str {
-    return env!("CARGO_PKG_VERSION");
+    env!("CARGO_PKG_VERSION")
 }
 
 /// Ensures every check dependency before cache lookup or gate stages.
@@ -1167,14 +1149,12 @@ fn prepare_check(components: fn(), tools: fn(), rustfmt: fn()) {
     components();
     tools();
     rustfmt();
-    return;
 }
 
 /// Writes configs before any refresh can ask dprint to update them.
 fn prepare_fix(write: fn(), refresh: fn()) {
     write();
     refresh();
-    return;
 }
 
 /// Prints the active rule set: every clippy group denied, the rustc forbid/deny
@@ -1207,15 +1187,14 @@ fn print_rules() {
          test, cargo-deny, cargo-machete"
     ));
     discard(out.flush());
-    return;
 }
 
 /// Reads validated exceptions for config generation.
 fn project_exceptions() -> Exceptions {
-    return load_project_exceptions().unwrap_or_else(|error| {
+    load_project_exceptions().unwrap_or_else(|error| {
         discard(exception_failure(&error));
-        return Exceptions::default();
-    });
+        Exceptions::default()
+    })
 }
 
 /// Eligible project files, excluding vendored directories and generated globs.
@@ -1223,32 +1202,20 @@ fn project_exceptions() -> Exceptions {
 /// # Errors
 /// Returns an error if the root or eligible file paths cannot be read.
 fn project_files() -> io::Result<Vec<PathBuf>> {
-    let root = match env::current_dir() {
-        Ok(directory) => directory,
-        Err(error) => return Err(error),
-    };
-    let paths = match files::required(&root) {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
-    let vendored = match vendored_excludes() {
-        Ok(found) => found,
-        Err(error) => return Err(error),
-    };
+    let root = env::current_dir()?;
+    let paths = files::required(&root)?;
+    let vendored = vendored_excludes()?;
     let excludes: Vec<PathBuf> = vendored
         .iter()
-        .map(|glob| return root.join(glob.strip_suffix("**").unwrap_or(glob)))
+        .map(|glob| root.join(glob.strip_suffix("**").unwrap_or(glob)))
         .collect();
-    let declared = match load_project_exceptions() {
-        Ok(exceptions) => exceptions,
-        Err(error) => return Err(error),
-    };
-    return Ok(filter_project_files(
+    let declared = load_project_exceptions()?;
+    Ok(filter_project_files(
         &root,
         paths,
         &excludes,
         &declared.generated,
-    ));
+    ))
 }
 
 /// Reads one exception source with path-bearing diagnostics.
@@ -1266,12 +1233,12 @@ fn read_exception_file(path: &Path, source: ExceptionSource) -> io::Result<Excep
         },
         Err(error) => return Err(exception_path_error(path, &error)),
     };
-    return toml::from_str(&text).map_err(|error| {
-        return io::Error::new(
+    toml::from_str(&text).map_err(|error| {
+        io::Error::new(
             io::ErrorKind::InvalidData,
             format!("{}: {error}", path.display()),
-        );
-    });
+        )
+    })
 }
 
 /// Reads and merges root and external exceptions, preserving every list.
@@ -1283,22 +1250,17 @@ fn read_exceptions(root: &Path, external: Option<&Path>) -> io::Result<Exception
     for declared in [
         read_exception_file(root, ExceptionSource::Optional),
         external.map_or_else(
-            || return Ok(Exceptions::default()),
-            |path| {
-                return read_exception_file(path, ExceptionSource::Required);
-            },
+            || Ok(Exceptions::default()),
+            |path| read_exception_file(path, ExceptionSource::Required),
         ),
     ] {
-        let parsed = match declared {
-            Ok(value) => value,
-            Err(error) => return Err(error),
-        };
+        let parsed = declared?;
         merged.advisories.extend(parsed.advisories);
         merged.duplicates.extend(parsed.duplicates);
         merged.generated.extend(parsed.generated);
         merged.words.extend(parsed.words);
     }
-    return Ok(merged);
+    Ok(merged)
 }
 
 /// Refreshes the toolchain to latest on a cadence: every run under CI, otherwise
@@ -1312,7 +1274,6 @@ fn refresh_toolchain() {
         do_refresh();
         state::mark_refreshed();
     }
-    return;
 }
 
 /// Reports any non-survivor `//` comment lines in one file, returning if found.
@@ -1329,7 +1290,7 @@ fn report_comments(path: &Path, content: &str) -> bool {
             ));
         }
     }
-    return found;
+    found
 }
 
 /// Reports findings for shell entry points, retaining every severity and code.
@@ -1337,7 +1298,7 @@ fn report_shell_findings(findings: &[ShellFinding], scripts: &BTreeSet<PathBuf>)
     let mut result = ExitCode::SUCCESS;
     let selected = findings
         .iter()
-        .filter(|finding| return scripts.contains(Path::new(&finding.file)));
+        .filter(|finding| scripts.contains(Path::new(&finding.file)));
     for finding in selected {
         discard(writeln!(
             io::stderr(),
@@ -1351,7 +1312,7 @@ fn report_shell_findings(findings: &[ShellFinding], scripts: &BTreeSet<PathBuf>)
         ));
         result = ExitCode::FAILURE;
     }
-    return result;
+    result
 }
 
 /// Returns the nightly rustfmt path, installing the toolchain + component if absent.
@@ -1368,7 +1329,7 @@ fn require_nightly_rustfmt() -> Option<String> {
         "--profile",
         "minimal",
     ]));
-    return nightly_rustfmt();
+    nightly_rustfmt()
 }
 
 /// Resolves a binary from PATH, then the cargo installation directory.
@@ -1376,12 +1337,12 @@ fn resolve_tool(binary: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH");
     let cargo_home = env::var_os("CARGO_HOME");
     let home = env::var_os("HOME");
-    return resolve_tool_in(
+    resolve_tool_in(
         binary,
         path.as_deref(),
         cargo_home.as_deref(),
         home.as_deref(),
-    );
+    )
 }
 
 /// Resolves a tool using explicit environment values for isolated tests.
@@ -1392,14 +1353,12 @@ fn resolve_tool_in(
     home: Option<&OsStr>,
 ) -> Option<PathBuf> {
     let mut directories: Vec<PathBuf> = path
-        .map(|value| return env::split_paths(value).collect())
+        .map(|value| env::split_paths(value).collect())
         .unwrap_or_default();
     directories.extend(
         cargo_home
-            .map(|cargo| return PathBuf::from(cargo).join("bin"))
-            .or_else(|| {
-                return home.map(|user_home| return PathBuf::from(user_home).join(".cargo/bin"));
-            }),
+            .map(|cargo| PathBuf::from(cargo).join("bin"))
+            .or_else(|| home.map(|user_home| PathBuf::from(user_home).join(".cargo/bin"))),
     );
     for directory in directories {
         let candidate = directory.join(binary);
@@ -1407,22 +1366,22 @@ fn resolve_tool_in(
             return Some(candidate);
         }
     }
-    return None;
+    None
 }
 
 /// Runs the in-house advisories, failing only when file enumeration fails.
 fn run_advisories() -> ExitCode {
-    return run_seq(&[
+    run_seq(&[
         ("staleness", run_staleness_advisory),
         ("dupconst", run_dupconst_advisory),
         ("gibberish", run_gibberish_advisory),
         ("floatdiv", run_floatdiv_advisory),
-    ]);
+    ])
 }
 
 /// Runs the binary lint only when workspace metadata contains a binary target.
 fn run_binary_lint(mode: LintMode) -> ExitCode {
-    return run_binary_lint_with(mode, workspace_has_binary(), cmd);
+    run_binary_lint_with(mode, workspace_has_binary(), cmd)
 }
 
 /// Preserves target probe and clippy failures while skipping library-only workspaces.
@@ -1438,7 +1397,7 @@ fn run_binary_lint_with(
     }
     let arguments = binary_lint_args(mode);
     let references: Vec<&str> = arguments.iter().map(String::as_str).collect();
-    return run("cargo", &references);
+    run("cargo", &references)
 }
 
 /// Runs all checks with temporary configs (no green-cache; used by CI paths).
@@ -1447,7 +1406,7 @@ fn run_check_all() -> ExitCode {
         Ok(directory) => directory,
         Err(error) => return exception_failure(&error),
     };
-    discard(CHECK_CONFIGS.with(|directory| return directory.replace(Some(configs.clone()))));
+    discard(CHECK_CONFIGS.with(|directory| directory.replace(Some(configs.clone()))));
     let result = run_seq(&[
         ("deny", run_deny),
         ("doc", run_doc),
@@ -1462,9 +1421,9 @@ fn run_check_all() -> ExitCode {
         ("typos", run_typos),
     ]);
     let advisories = run_advisories();
-    discard(CHECK_CONFIGS.with(|directory| return directory.replace(None)));
+    discard(CHECK_CONFIGS.with(|directory| directory.replace(None)));
     discard(fs::remove_dir_all(configs));
-    return worst(result, advisories);
+    worst(result, advisories)
 }
 
 /// Runs clippy auto-fix with all lint flags.
@@ -1485,7 +1444,7 @@ fn run_clippy_fix() -> ExitCode {
     if result != ExitCode::SUCCESS {
         return result;
     }
-    return run_binary_lint(LintMode::Fix);
+    run_binary_lint(LintMode::Fix)
 }
 
 /// Default gate: short-circuits with `ok (cached)` when the working tree is
@@ -1513,7 +1472,7 @@ fn run_default() -> ExitCode {
         persist_green(key.as_ref());
         emit("ok");
     }
-    return result;
+    result
 }
 
 /// Runs cargo-deny; suppresses only upstream-transitive duplicates the project cannot fix.
@@ -1529,9 +1488,8 @@ fn run_deny() -> ExitCode {
         );
     }
     discard(command.arg("check"));
-    let output = match command.tool_output() {
-        Ok(out) => out,
-        Err(_) => return ExitCode::FAILURE,
+    let Ok(output) = command.tool_output() else {
+        return ExitCode::FAILURE;
     };
     if output.status.success() {
         return ExitCode::SUCCESS;
@@ -1548,12 +1506,12 @@ fn run_deny() -> ExitCode {
     }
     discard(io::stdout().write_all(&output.stdout));
     discard(io::stderr().write_all(&output.stderr));
-    return ExitCode::from(u8::try_from(output.status.code().unwrap_or(1)).unwrap_or(1));
+    ExitCode::from(u8::try_from(output.status.code().unwrap_or(1)).unwrap_or(1))
 }
 
 /// Builds docs with warnings denied.
 fn run_doc() -> ExitCode {
-    return cmd_env(
+    cmd_env(
         "cargo",
         &[
             "doc",
@@ -1567,7 +1525,7 @@ fn run_doc() -> ExitCode {
             "-D warnings -D rustdoc::missing_crate_level_docs -D rustdoc::private_doc_tests -D \
              rustdoc::unescaped_backticks",
         )],
-    );
+    )
 }
 
 /// Runs doctests, gating on real failures. A crate with no library target has no
@@ -1593,7 +1551,7 @@ fn run_doctests() -> ExitCode {
     }
     discard(io::stdout().write_all(&out.stdout));
     discard(io::stderr().write_all(&out.stderr));
-    return ExitCode::from(u8::try_from(out.status.code().unwrap_or(1)).unwrap_or(1));
+    ExitCode::from(u8::try_from(out.status.code().unwrap_or(1)).unwrap_or(1))
 }
 
 /// Runs dprint on explicit eligible files, keeping configured exclusions.
@@ -1613,11 +1571,11 @@ fn run_dprint(action: &str) -> ExitCode {
         },
     };
     let status = dprint_command(action, &patterns).tool_status();
-    return if status.is_ok_and(|completed| return completed.success()) {
+    if status.is_ok_and(|completed| completed.success()) {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
-    };
+    }
 }
 
 /// Reports duplicate-value const groups.
@@ -1633,7 +1591,7 @@ fn run_dupconst_advisory() -> ExitCode {
         ),
         &analyze::format_dupconst(&dups),
     );
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Lints every feature combination, not only the all-features one.
@@ -1655,7 +1613,7 @@ fn run_feature_matrix() -> ExitCode {
     args.extend(build_lint_args());
 
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd("cargo", &refs);
+    cmd("cargo", &refs)
 }
 
 /// Auto-fixes clippy, comments, typos, and formatting.
@@ -1678,7 +1636,7 @@ fn run_fix() -> ExitCode {
     if fixed != ExitCode::SUCCESS {
         return fixed;
     }
-    return run_check_all();
+    run_check_all()
 }
 
 /// Reports unguarded float divisions.
@@ -1694,7 +1652,7 @@ fn run_floatdiv_advisory() -> ExitCode {
         ),
         &analyze::format_floatdiv(&fdiv),
     );
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Formats rust and all other files, gating on a formatter that fails (e.g. a
@@ -1706,7 +1664,7 @@ fn run_fmt_all() -> ExitCode {
     };
     let result_rust = run_fmt_members(&rustfmt, &[]);
     let result_dprint = run_dprint("fmt");
-    return worst(result_rust, result_dprint);
+    worst(result_rust, result_dprint)
 }
 
 /// Checks formatting of rust and all other files.
@@ -1717,7 +1675,7 @@ fn run_fmt_check() -> ExitCode {
     };
     let result_rust = run_fmt_members(&rustfmt, &["--check"]);
     let result_dprint = run_dprint("check");
-    return worst(result_rust, result_dprint);
+    worst(result_rust, result_dprint)
 }
 
 /// Formats explicit eligible Rust files without recursively loading modules.
@@ -1728,11 +1686,7 @@ fn run_fmt_members(rustfmt: &str, extra: &[&str]) -> ExitCode {
     };
     let paths: Vec<PathBuf> = eligible
         .into_iter()
-        .filter(|path| {
-            return path
-                .extension()
-                .is_some_and(|extension| return extension == "rs");
-        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
         .collect();
     if paths.is_empty() {
         return ExitCode::SUCCESS;
@@ -1752,11 +1706,11 @@ fn run_fmt_members(rustfmt: &str, extra: &[&str]) -> ExitCode {
             .args(["--config", "skip_children=true"])
             .arg(path)
             .tool_status();
-        if !status.is_ok_and(|completed| return completed.success()) {
+        if !status.is_ok_and(|completed| completed.success()) {
             result = ExitCode::FAILURE;
         }
     }
-    return result;
+    result
 }
 
 /// Reports hash-gibberish identifiers.
@@ -1766,7 +1720,7 @@ fn run_gibberish_advisory() -> ExitCode {
         Err(error) => return enumeration_failure(&error),
     };
     advisory("", &analyze::format_gibberish(&found));
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Runs clippy with all lint flags.
@@ -1785,7 +1739,7 @@ fn run_lint() -> ExitCode {
     if result != ExitCode::SUCCESS {
         return result;
     }
-    return run_binary_lint(LintMode::Check);
+    run_binary_lint(LintMode::Check)
 }
 
 /// Runs cargo-machete on explicit eligible manifests rather than a directory.
@@ -1796,17 +1750,13 @@ fn run_machete() -> ExitCode {
     };
     let paths: Vec<PathBuf> = eligible
         .into_iter()
-        .filter(|path| {
-            return path
-                .file_name()
-                .is_some_and(|name| return name == "Cargo.toml");
-        })
+        .filter(|path| path.file_name().is_some_and(|name| name == "Cargo.toml"))
         .collect();
     if paths.is_empty() {
         return ExitCode::SUCCESS;
     }
     let output = machete_command(&paths).tool_output();
-    return match output {
+    match output {
         Ok(out) if out.status.success() => ExitCode::SUCCESS,
         Ok(out) => {
             discard(io::stdout().write_all(&out.stdout));
@@ -1814,7 +1764,7 @@ fn run_machete() -> ExitCode {
             ExitCode::FAILURE
         },
         Err(_) => ExitCode::FAILURE,
-    };
+    }
 }
 
 /// Checks that no non-survivor `//` comments exist in rust source.
@@ -1832,7 +1782,7 @@ fn run_no_comments() -> ExitCode {
     if found {
         return ExitCode::FAILURE;
     }
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Removes non-survivor `//` comments from rust source files.
@@ -1848,7 +1798,7 @@ fn run_remove_comments() -> ExitCode {
             discard(fs::write(&path, joined));
         }
     }
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Sorts every module's items into the groups the ordering lint declares.
@@ -1856,15 +1806,15 @@ fn run_remove_comments() -> ExitCode {
 /// The rewrite refuses itself whenever a file's token multiset would change, so
 /// a misparse leaves the file untouched rather than losing a declaration.
 fn run_reorder_items() -> ExitCode {
-    return match reorder::sort_tree(Path::new(".")) {
+    match reorder::sort_tree(Path::new(".")) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => enumeration_failure(&error),
-    };
+    }
 }
 
 /// Runs steps sequentially, stopping on first failure.
 fn run_seq(steps: &[Stage<'_>]) -> ExitCode {
-    return run_seq_to(steps, &mut io::stderr());
+    run_seq_to(steps, &mut io::stderr())
 }
 
 /// Runs named steps and writes a diagnostic for the first failure.
@@ -1876,7 +1826,7 @@ fn run_seq_to(steps: &[Stage<'_>], output: &mut impl io::Write) -> ExitCode {
             return code;
         }
     }
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Lints shell scripts while allowing sources only from the candidate set.
@@ -1891,13 +1841,13 @@ fn run_shellcheck() -> ExitCode {
     };
     let scripts: BTreeSet<PathBuf> = candidates
         .iter()
-        .filter(|path| return is_shell(path))
+        .filter(|path| is_shell(path))
         .cloned()
         .collect();
     if scripts.is_empty() {
         return ExitCode::SUCCESS;
     }
-    return shellcheck_candidates(&candidates, &scripts);
+    shellcheck_candidates(&candidates, &scripts)
 }
 
 /// Runs shfmt over every shell script with the given mode flag.
@@ -1921,18 +1871,18 @@ fn run_shfmt(mode: &str) -> ExitCode {
         args.push(path.display().to_string());
     }
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    return cmd("shfmt", &refs);
+    cmd("shfmt", &refs)
 }
 
 /// Verifies every shell script is shfmt-formatted (shell auto-detected from the
 /// shebang, 2-space indent).
 fn run_shfmt_check() -> ExitCode {
-    return run_shfmt("-d");
+    run_shfmt("-d")
 }
 
 /// Formats every shell script in place with shfmt.
 fn run_shfmt_fix() -> ExitCode {
-    return run_shfmt("-w");
+    run_shfmt("-w")
 }
 
 /// Reports outdated dependencies without making outdated pins a gate failure.
@@ -1948,7 +1898,7 @@ fn run_staleness_advisory() -> ExitCode {
         ),
         &staleness::format(&stale),
     );
-    return ExitCode::SUCCESS;
+    ExitCode::SUCCESS
 }
 
 /// Runs tests with nextest and doc tests.
@@ -1961,12 +1911,12 @@ fn run_test() -> ExitCode {
         "--status-level=none",
         "--final-status-level=fail",
     ]);
-    return worst(unit, run_doctests());
+    worst(unit, run_doctests())
 }
 
 /// Checks for typos in source.
 fn run_typos() -> ExitCode {
-    return run_typos_excluded(&[]);
+    run_typos_excluded(&[])
 }
 
 /// Runs typos on explicit eligible files, keeping configured exclusions.
@@ -1979,16 +1929,16 @@ fn run_typos_excluded(extra: &[&str]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let status = typos_command(extra, &paths).tool_status();
-    return if status.is_ok_and(|completed| return completed.success()) {
+    if status.is_ok_and(|completed| completed.success()) {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
-    };
+    }
 }
 
 /// Auto-fixes typos in source.
 fn run_typos_fix() -> ExitCode {
-    return run_typos_excluded(&["-w"]);
+    run_typos_excluded(&["-w"])
 }
 
 /// The rustfmt config written for the project; the base config verbatim.
@@ -1997,7 +1947,7 @@ fn run_typos_fix() -> ExitCode {
 /// (`cargo fmt -p`), not by a rustfmt `ignore` block — an appended block also
 /// makes the written `rustfmt.toml` itself dprint-dirty under a strict config.
 fn rustfmt_with_ignores() -> String {
-    return RUSTFMT_TOML.to_owned();
+    RUSTFMT_TOML.to_owned()
 }
 
 /// Eligible shell scripts by extension or shell shebang.
@@ -2005,12 +1955,8 @@ fn rustfmt_with_ignores() -> String {
 /// # Errors
 /// Returns an error if eligible file enumeration fails.
 fn shell_files() -> io::Result<Vec<PathBuf>> {
-    return files::required(Path::new(".")).map(|paths| {
-        return paths
-            .into_iter()
-            .filter(|path| return is_shell(path))
-            .collect();
-    });
+    files::required(Path::new("."))
+        .map(|paths| paths.into_iter().filter(|path| is_shell(path)).collect())
 }
 
 /// Whether the first line names the `sh` interpreter.
@@ -2018,10 +1964,10 @@ fn shell_shebang(text: &str) -> bool {
     let Some(line) = text.lines().next() else {
         return false;
     };
-    return line.starts_with("#!")
+    line.starts_with("#!")
         && line
-            .split(|character: char| return !character.is_alphanumeric() && character != '_')
-            .any(|word| return word == "sh");
+            .split(|character: char| !character.is_alphanumeric() && character != '_')
+            .any(|word| word == "sh")
 }
 
 /// Runs `ShellCheck` with every eligible source pathname in its input allowlist.
@@ -2048,7 +1994,7 @@ fn shellcheck_candidates(candidates: &[PathBuf], scripts: &BTreeSet<PathBuf>) ->
             return ExitCode::FAILURE;
         },
     };
-    return report_shell_findings(&findings, scripts);
+    report_shell_findings(&findings, scripts)
 }
 
 /// Source files scanned for comments (eligible `.rs` files under `src/`).
@@ -2056,7 +2002,7 @@ fn shellcheck_candidates(candidates: &[PathBuf], scripts: &BTreeSet<PathBuf>) ->
 /// # Errors
 /// Returns an error if eligible source file enumeration fails.
 fn source_files() -> io::Result<Vec<PathBuf>> {
-    return analyze::source_files();
+    analyze::source_files()
 }
 
 /// Prints a tool spawn failure without altering the operating system error.
@@ -2066,7 +2012,6 @@ fn spawn_failure(program: &OsStr, error: &io::Error, output: &mut impl io::Write
         "lintmax: could not start {}: {error}",
         program.to_string_lossy()
     ));
-    return;
 }
 
 /// Strips comments from a file's content, returning the new text if it changed.
@@ -2088,7 +2033,7 @@ fn strip_content(content: &str) -> Option<String> {
     if content.ends_with('\n') {
         joined.push('\n');
     }
-    return Some(joined);
+    Some(joined)
 }
 
 /// Replaces `anchor` with `shape` applied to the quoted entries, when any.
@@ -2103,37 +2048,28 @@ fn substitute(
     }
     let body = entries
         .iter()
-        .map(|entry| return format!("  \"{entry}\","))
+        .map(|entry| format!("  \"{entry}\","))
         .collect::<Vec<String>>()
         .join("\n");
-    return content.replace(anchor, &shape(&body));
+    content.replace(anchor, &shape(&body))
 }
 
 /// Duplicates safe to suppress: every cargo-deny error is a duplicate no first-party crate causes.
 fn suppressible_duplicates(stderr: &str) -> Option<Vec<String>> {
-    let dups = match duplicate_only_failures(stderr) {
-        Some(found) => found,
-        None => return None,
-    };
+    let dups = duplicate_only_failures(stderr)?;
     if dups.is_empty() {
         return None;
     }
-    let first_party = match first_party_direct_deps() {
-        Ok(names) => names,
-        Err(_) => return None,
-    };
-    if dups
-        .iter()
-        .any(|name| return first_party.contains(name.as_str()))
-    {
+    let first_party = first_party_direct_deps().ok()?;
+    if dups.iter().any(|name| first_party.contains(name.as_str())) {
         return None;
     }
-    return Some(dups);
+    Some(dups)
 }
 
 /// Builds every child command through the same binary resolver.
 fn tool_command(binary: &str) -> Command {
-    return Command::new(resolve_tool(binary).unwrap_or_else(|| return PathBuf::from(binary)));
+    Command::new(resolve_tool(binary).unwrap_or_else(|| PathBuf::from(binary)))
 }
 
 /// Builds spelling commands that honor exclusions even for explicit filenames.
@@ -2143,12 +2079,12 @@ fn typos_command(extra: &[&str], paths: &[PathBuf]) -> Command {
     if checking() {
         discard(command.arg("--config").arg(config_path("typos.toml")));
     }
-    return command;
+    command
 }
 
 /// Folds both exception sources into the temporary spelling configuration.
 fn typos_with_exceptions(content: &str) -> String {
-    return merge_typos_exceptions(content, &project_exceptions());
+    merge_typos_exceptions(content, &project_exceptions())
 }
 
 /// Exclude globs for vendored external packages (local non-workspace crates).
@@ -2166,22 +2102,19 @@ fn vendored_excludes() -> io::Result<Vec<String>> {
         discard(command.arg("--locked"));
     }
     let output = command.tool_output();
-    let out = match output {
-        Ok(captured) => captured,
-        Err(error) => return Err(error),
-    };
+    let out = output?;
     let Ok(meta) = serde_json::from_slice::<Value>(&out.stdout) else {
         return Ok(Vec::new());
     };
     let members = workspace_member_ids(&meta);
     let cwd = env::current_dir().unwrap_or_default();
     let packages = meta.get("packages").and_then(Value::as_array);
-    return Ok(packages
+    Ok(packages
         .into_iter()
         .flatten()
-        .filter(|pkg| return is_vendored_package(pkg, &members))
-        .filter_map(|pkg| return package_dir_glob(pkg, &cwd))
-        .collect());
+        .filter(|pkg| is_vendored_package(pkg, &members))
+        .filter_map(|pkg| package_dir_glob(pkg, &cwd))
+        .collect())
 }
 
 /// Whether workspace metadata names any first-party binary target.
@@ -2194,10 +2127,7 @@ fn workspace_has_binary() -> io::Result<bool> {
     if checking() {
         discard(command.arg("--locked"));
     }
-    let output = match command.tool_output() {
-        Ok(captured) => captured,
-        Err(error) => return Err(error),
-    };
+    let output = command.tool_output()?;
     if !output.status.success() {
         discard(io::stdout().write_all(&output.stdout));
         discard(io::stderr().write_all(&output.stderr));
@@ -2205,9 +2135,9 @@ fn workspace_has_binary() -> io::Result<bool> {
             "cargo metadata failed while selecting binary targets",
         ));
     }
-    return serde_json::from_slice::<Value>(&output.stdout)
-        .map(|metadata| return workspace_metadata_has_binary(&metadata))
-        .map_err(io::Error::other);
+    serde_json::from_slice::<Value>(&output.stdout)
+        .map(|metadata| workspace_metadata_has_binary(&metadata))
+        .map_err(io::Error::other)
 }
 
 /// Package ids that are workspace (first-party) members.
@@ -2219,28 +2149,28 @@ fn workspace_member_ids(meta: &Value) -> BTreeSet<String> {
             discard(set.insert(text.to_owned()));
         }
     }
-    return set;
+    set
 }
 
 /// Whether a workspace member declares a binary, excluding dependency targets.
 fn workspace_metadata_has_binary(metadata: &Value) -> bool {
     let members = workspace_member_ids(metadata);
-    return metadata
+    metadata
         .get("packages")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter(|package| {
-            return package
+            package
                 .get("id")
                 .and_then(Value::as_str)
-                .is_some_and(|identifier| return members.contains(identifier));
+                .is_some_and(|identifier| members.contains(identifier))
         })
-        .filter_map(|package| return package.get("targets").and_then(Value::as_array))
+        .filter_map(|package| package.get("targets").and_then(Value::as_array))
         .flatten()
-        .filter_map(|target| return target.get("kind").and_then(Value::as_array))
+        .filter_map(|target| target.get("kind").and_then(Value::as_array))
         .flatten()
-        .any(|kind| return kind.as_str() == Some("bin"));
+        .any(|kind| kind.as_str() == Some("bin"))
 }
 
 /// Returns the worse of two exit codes.
@@ -2248,7 +2178,7 @@ fn worst(first: ExitCode, second: ExitCode) -> ExitCode {
     if first != ExitCode::SUCCESS {
         return first;
     }
-    return second;
+    second
 }
 
 /// Writes each isolated config, propagating the first write failure.
@@ -2257,11 +2187,9 @@ fn worst(first: ExitCode, second: ExitCode) -> ExitCode {
 /// Returns an error if a config cannot be written.
 fn write_check_configs(directory: &Path) -> io::Result<()> {
     for &(name, content) in MANAGED_CONFIGS {
-        if let Err(error) = fs::write(directory.join(name), check_content(name, content)) {
-            return Err(error);
-        }
+        fs::write(directory.join(name), check_content(name, content))?;
     }
-    return Ok(());
+    Ok(())
 }
 
 /// Writes a config file if it does not exist or matches embedded content.
@@ -2280,7 +2208,6 @@ fn write_config(name: &str, content: &str) {
         return;
     }
     discard(fs::write(&path, final_content));
-    return;
 }
 
 /// Writes all temporary config files, then bumps dprint plugins to latest so
@@ -2294,7 +2221,6 @@ fn write_configs() {
         }
     }
     bump_dprint_plugins();
-    return;
 }
 
 #[cfg(test)]

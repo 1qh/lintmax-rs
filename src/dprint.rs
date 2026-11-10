@@ -13,34 +13,28 @@ const HOST: &str = "https://plugins.dprint.dev/";
 /// different plugin, and the wrong name still reads as a name — so the only
 /// symptom is a 404 against a plausible URL.
 fn plugin_name(file: &str) -> &str {
-    let Some((head, tail)) = file.rsplit_once(|ch| return ch == '-' || ch == '@') else {
+    let Some((head, tail)) = file.rsplit_once(['-', '@']) else {
         return file;
     };
     let digits = tail.trim_start_matches('v');
     let mut parts = digits.split('.');
     let versioned = digits.split('.').count() == 3
-        && parts.all(|part| {
-            return !part.is_empty() && part.chars().all(|ch| return ch.is_ascii_digit());
-        });
+        && parts.all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()));
     if versioned {
         return head;
     }
-    return file;
+    file
 }
 
 /// Extracts the plugin path (e.g. `dprint/toml`, `g-plane/malva`) from a pinned
 /// wasm URL so its `latest.json` can be fetched.
 fn plugin_path(url: &str) -> Option<String> {
-    let Some(tail) = url.strip_prefix(HOST) else {
-        return None;
-    };
-    let Some(file) = tail.strip_suffix(".wasm") else {
-        return None;
-    };
+    let tail = url.strip_prefix(HOST)?;
+    let file = tail.strip_suffix(".wasm")?;
     if let Some((owner, rest)) = file.split_once('/') {
         return Some(format!("{owner}/{}", plugin_name(rest)));
     }
-    return Some(format!("dprint/{}", plugin_name(file)));
+    Some(format!("dprint/{}", plugin_name(file)))
 }
 
 /// Fetches the latest wasm URL for a plugin path via its `latest.json`.
@@ -65,37 +59,27 @@ fn latest_url(path: &str) -> Option<String> {
     let Ok(body) = String::from_utf8(output.stdout) else {
         return None;
     };
-    return extract_url(&body);
+    extract_url(&body)
 }
 
 /// Pulls the `"url"` field out of a `latest.json` body without a JSON dependency
 /// beyond a single-field scan (the body is a flat object).
 fn extract_url(body: &str) -> Option<String> {
-    let Some((_, after)) = body.split_once("\"url\":") else {
-        return None;
-    };
-    let Some(open) = after.find('"') else {
-        return None;
-    };
-    let Some(rest) = after.get(open.saturating_add(1)..) else {
-        return None;
-    };
-    let Some(close) = rest.find('"') else {
-        return None;
-    };
-    let Some(url) = rest.get(..close) else {
-        return None;
-    };
+    let (_, after) = body.split_once("\"url\":")?;
+    let open = after.find('"')?;
+    let rest = after.get(open.saturating_add(1)..)?;
+    let close = rest.find('"')?;
+    let url = rest.get(..close)?;
     if url.starts_with(HOST) {
         return Some(url.to_owned());
     }
-    return None;
+    None
 }
 
 /// Rewrites a single config line to the plugin's latest URL when it pins one.
 fn rewrite_line(line: &str) -> String {
     let trimmed = line.trim();
-    let inner = trimmed.trim_matches(|ch| return ch == '"' || ch == ',');
+    let inner = trimmed.trim_matches(|ch| ch == '"' || ch == ',');
     if !inner.starts_with(HOST) {
         return line.to_owned();
     }
@@ -105,7 +89,7 @@ fn rewrite_line(line: &str) -> String {
     let Some(latest) = latest_url(&path) else {
         return line.to_owned();
     };
-    return line.replace(inner, &latest);
+    line.replace(inner, &latest)
 }
 
 /// Returns the config text with every plugin URL bumped to latest, or `None`
@@ -126,7 +110,7 @@ pub fn bump(config: &str) -> Option<String> {
     if restored == config {
         return None;
     }
-    return Some(restored);
+    Some(restored)
 }
 
 #[cfg(test)]

@@ -33,30 +33,28 @@ impl Cursor {
     /// Char at an absolute offset from the current position.
     fn at(&self, ahead: usize) -> Option<char> {
         let chars = &self.chars;
-        let found = self
-            .pos
-            .checked_add(ahead)
-            .and_then(|idx| return chars.get(idx).copied());
-        return found;
+
+        let idx = self.pos.checked_add(ahead)?;
+        chars.get(idx).copied()
     }
 
     /// Prefix of the line up to the current position, trailing space trimmed.
     fn code_before(&self) -> String {
         let slice = self.chars.get(..self.pos).unwrap_or(&self.chars);
-        return slice.iter().collect::<String>().trim_end().to_owned();
+        slice.iter().collect::<String>().trim_end().to_owned()
     }
 
     /// Whole line as a string.
     fn line(&self) -> String {
-        return self.chars.iter().collect();
+        self.chars.iter().collect()
     }
 
     /// Builds a cursor over a line.
     fn new(line: &str) -> Self {
-        return Self {
+        Self {
             chars: line.chars().collect(),
             pos: 0,
-        };
+        }
     }
 
     /// Advances the cursor by one char.
@@ -75,7 +73,7 @@ const fn quoted_mode(close: char) -> Scan {
     if close == '"' {
         return Scan::Str;
     }
-    return Scan::Char;
+    Scan::Char
 }
 
 /// Consumes one char inside a `"..."` or `'.'` literal, returning the next mode.
@@ -88,7 +86,7 @@ const fn step_quoted(cursor: &mut Cursor, cur: char, close: char) -> Scan {
     if cur == close {
         return Scan::Code;
     }
-    return quoted_mode(close);
+    quoted_mode(close)
 }
 
 /// Whether the cursor sits on a raw-string terminator for `hashes` hashes.
@@ -98,18 +96,18 @@ fn closes_raw(cursor: &Cursor, hashes: usize) -> bool {
             return false;
         }
     }
-    return true;
+    true
 }
 
 /// Whether the char at the cursor opens a char literal (`'x'`, `'\n'`) rather
 /// than a lifetime (`'a`), so lifetimes never flip the scanner into char mode.
 fn opens_char_literal(cursor: &Cursor) -> bool {
-    return cursor.at(1) == Some('\\') || cursor.at(2) == Some('\'');
+    cursor.at(1) == Some('\\') || cursor.at(2) == Some('\'')
 }
 
 /// Whether the next chars open a survivor doc comment (`///`, `//!`).
 fn opens_doc_comment(cursor: &Cursor) -> bool {
-    return matches!(cursor.at(2), Some('/' | '!'));
+    matches!(cursor.at(2), Some('/' | '!'))
 }
 
 /// Counts the `#` run after `r`, returning the count when a `"` follows.
@@ -121,7 +119,7 @@ fn raw_string_hashes(cursor: &Cursor) -> Option<usize> {
     if cursor.at(hashes.saturating_add(1)) == Some('"') {
         return Some(hashes);
     }
-    return None;
+    None
 }
 
 /// Consumes one char in code mode, returning the scan step.
@@ -147,7 +145,7 @@ fn step_code(cursor: &mut Cursor, cur: char) -> Step {
     if cur == '\'' && opens_char_literal(cursor) {
         return Step::Next(Scan::Char);
     }
-    return Step::Next(Scan::Code);
+    Step::Next(Scan::Code)
 }
 
 /// Consumes one char inside a raw string, returning the next mode.
@@ -159,7 +157,7 @@ fn step_raw(cursor: &mut Cursor, cur: char, hashes: usize) -> Scan {
         return Scan::Code;
     }
     cursor.step();
-    return Scan::Raw(hashes);
+    Scan::Raw(hashes)
 }
 
 /// Strips a non-survivor `//` comment from one line. Preserves code, strings,
@@ -181,7 +179,7 @@ pub fn strip_line(line: &str) -> (String, bool) {
             Scan::Str => step_quoted(&mut cursor, cur, '"'),
         };
     }
-    return (line.to_owned(), false);
+    (line.to_owned(), false)
 }
 
 #[cfg(test)]
